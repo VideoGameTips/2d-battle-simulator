@@ -397,6 +397,7 @@ function surfaceMaterial(color,kind='metal',roughness=.55,metalness=0){
   return new THREE.MeshStandardMaterial({color,map:surfaceMap(kind),roughness,metalness});
 }
 const SILVER = c=>surfaceMaterial(c||0xc2c6cc,'metal',0.42,0.72);
+const PAINT  = c=>surfaceMaterial(c||0x6a6a4a,'paint',0.86,0.04);   // matte painted steel (tanks, painted hull/plane bodies) — no chrome sheen
 function mkBox(w,h,d,m){ const x=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), m.isMaterial?m:SILVER(m)); x.castShadow=x.receiveShadow=true; return x; }
 function mkCyl(rt,rb,h,m,seg=14){ const x=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg), m.isMaterial?m:SILVER(m)); x.castShadow=true; return x; }
 
@@ -1014,6 +1015,18 @@ function buildShip(def, enemy){
 // ---- instanced jungle trees: thousands of trees rendered in ONE draw call ----
 const _treePlacements=[];   // world-space {x,y,z,s,ry}; filled by buildIsland, baked by buildTreeField
 let treeMesh=null;
+function islandPalette(name){
+  const m=(window._MAP&&window._MAP.name)||'', n=name||'';
+  if(/Hiroshima|Volcano|Caldera/.test(m)||/Hypocenter|Ash|Basalt|Lava|Caldera|Cinder|Obsidian/.test(n))
+    return {sand:0x9d8a6b,grass:0x5a5a4e,jung:0x373b31,jung2:0x4b4a3a,bush:0x3b4035,rock:0x4a4a46,bag:0x8c7d5a};
+  if(/Chernobyl|Frozen/.test(m)||/Reactor|Pripyat|Red Forest|Exclusion|Cooling/.test(n))
+    return {sand:0x9fa083,grass:0x58684a,jung:0x354330,jung2:0x6f7f3d,bush:0x46583a,rock:0x70776b,bag:0x8b855d};
+  if(/Desert|Omaha|100% Land|Landing/.test(m)||/Beach|Dune|Range|Flats|Armor Course|Dog Green|Easy Red|Fox Green/.test(n))
+    return {sand:0xd7c18a,grass:0x8a8150,jung:0x5e6a3b,jung2:0x7a8143,bush:0x6a7040,rock:0x7a7364,bag:0xa8955d};
+  if(/Night|Ghost|Blackwater|Fogbound/.test(m))
+    return {sand:0xa99e80,grass:0x435a42,jung:0x263c2e,jung2:0x34513c,bush:0x2d4634,rock:0x5a6162,bag:0x8c8156};
+  return {sand:0xcdb98a,grass:0x55753f,jung:0x2f5a30,jung2:0x3c6e38,bush:0x33602c,rock:0x6a6a66,bag:0x9a8a5a};
+}
 function mergeGeoms(geos){
   let total=0; geos.forEach(g=>total+=g.attributes.position.count);
   const pos=new Float32Array(total*3), nor=new Float32Array(total*3), col=new Float32Array(total*3);
@@ -1066,11 +1079,12 @@ function buildIsland(pos,r,name){
   const seed=Math.random()*20, long=isBase?1.28:1.2+Math.random()*0.42, short=isBase?0.95:0.92+Math.random()*0.16;
   const alongX=isBase||Math.random()<0.5, rx=r*(alongX?long:short), rz=r*(alongX?short:long), angle=isBase?0:(Math.random()-0.5)*1.35;
   g.rotation.y=angle;
-  const sand=surfaceMaterial(0xcdb98a,'ground',.98),grass=surfaceMaterial(0x55753f,'ground',.97),
-    jung=surfaceMaterial(0x2f5a30,'ground',1),jung2=surfaceMaterial(0x3c6e38,'ground',1),
-    bushM=surfaceMaterial(0x33602c,'ground',1),trunkM=surfaceMaterial(0x66472a,'ground',1),
-    rockM=surfaceMaterial(0x6a6a66,'concrete',1),concM=surfaceMaterial(0x787b70,'concrete',.95),
-    bagM=surfaceMaterial(0x9a8a5a,'ground',1);
+  const pal=islandPalette(name);
+  const sand=surfaceMaterial(pal.sand,'ground',.98),grass=surfaceMaterial(pal.grass,'ground',.97),
+    jung=surfaceMaterial(pal.jung,'ground',1),jung2=surfaceMaterial(pal.jung2,'ground',1),
+    bushM=surfaceMaterial(pal.bush,'ground',1),trunkM=surfaceMaterial(0x66472a,'ground',1),
+    rockM=surfaceMaterial(pal.rock,'concrete',1),concM=surfaceMaterial(0x787b70,'concrete',.95),
+    bagM=surfaceMaterial(pal.bag,'ground',1);
   const darkM=new THREE.MeshStandardMaterial({color:0x15190f,roughness:1});
   const beach=new THREE.Mesh(islandGeometry(rx,rz,2.2,seed,1.15), sand); beach.position.y=0.2; beach.receiveShadow=true; g.add(beach);
   const shallows=new THREE.Mesh(new THREE.RingGeometry(.78,1.08,48),
@@ -1239,7 +1253,7 @@ function buildLand(kind,team,pos,type){
   let range=110,dmg=10,hp=70,fireRate=2.0;
   if(kind==='tank'){
     const T=(typeof type==='object'?type:TANKS[type])||TANKS.sherman;
-    const body=SILVER(T.col), trackM=SILVER(0x2a2e22);
+    const body=PAINT(T.col), trackM=surfaceMaterial(0x2a2e22,'metal',0.85,0.55);   // matte-painted hull; grimy low-sheen tracks
     const hull=mkBox(T.hullW,T.hullH,T.hullL,body); hull.position.y=0.6+T.hullH/2; hull.castShadow=true; g.add(hull);
     for(const sx of [-1,1]){ const tr=mkBox(0.7,0.9,T.hullL*1.05,trackM); tr.position.set(sx*(T.hullW/2),0.55,0); g.add(tr);
       for(let i=0;i<4;i++){ const w=mkCyl(0.34,0.34,0.32,SILVER(0x16180f),8); w.rotation.z=Math.PI/2; w.position.set(sx*(T.hullW/2),0.45,(i-1.5)*(T.hullL*0.24)); g.add(w); } }
