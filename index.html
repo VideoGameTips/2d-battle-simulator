@@ -1469,7 +1469,7 @@ function buildTurret(def){
 }
 
 function aircraftSkin(col){
-  const m=surfaceMaterial(col,'paint',.38,.42);m.envMapIntensity=.7;return m;
+  const m=surfaceMaterial(col,'paint',.66,.08);m.envMapIntensity=.7;return m;   // matte painted airframe, not glossy semi-metal
 }
 function aircraftFuselage(length,radius,mat,slender=1){
   const L=length/2,r=radius,pts=[
@@ -1481,13 +1481,14 @@ function aircraftFuselage(length,radius,mat,slender=1){
   const geo=new THREE.LatheGeometry(pts,24);geo.rotateX(Math.PI/2);geo.computeVertexNormals();
   const mesh=new THREE.Mesh(geo,mat);mesh.castShadow=true;mesh.receiveShadow=true;return mesh;
 }
-function taperAircraftWing(geo,halfSpan){
-  // Real wings lose section depth toward the tip. Keep a hair of thickness at
-  // full span to prevent coincident faces from flickering in WebGL.
+function taperAircraftWing(geo,halfSpan,secondary=null){
+  // Main wings and the smaller horizontal tailplane each taper against their
+  // own span. Keep only a microscopic edge at the tip to avoid WebGL flicker.
   const pos=geo.attributes.position;
   for(let i=0;i<pos.count;i++){
-    const u=Math.min(1,Math.abs(pos.getX(i))/Math.max(0.001,halfSpan));
-    const section=Math.max(0.025,Math.pow(Math.max(0,1-u*u),0.55));
+    const localSpan=secondary&&pos.getZ(i)<=secondary.startZ?secondary.halfSpan:halfSpan;
+    const u=Math.min(1,Math.abs(pos.getX(i))/Math.max(0.001,localSpan));
+    const section=Math.max(0.003,Math.pow(Math.max(0,1-u*u),0.55));
     pos.setY(i,pos.getY(i)*section);
   }
   pos.needsUpdate=true;geo.computeVertexNormals();geo.computeBoundingBox();geo.computeBoundingSphere();
@@ -1521,7 +1522,9 @@ function aircraftUnifiedAirframe(g,opt,mat){
   const sh=new THREE.Shape();sh.moveTo(right[0][0],right[0][1]);for(let i=1;i<right.length;i++)sh.lineTo(right[i][0],right[i][1]);
   for(let i=right.length-2;i>=1;i--)sh.lineTo(-right[i][0],right[i][1]);sh.closePath();
   const geo=new THREE.ExtrudeGeometry(sh,{depth:thick,steps:1,bevelEnabled:true,bevelSegments:3,bevelSize:Math.min(.1,thick*.38),bevelThickness:Math.min(.07,thick*.28)});
-  geo.rotateX(Math.PI/2);geo.translate(0,thick*.5,0);taperAircraftWing(geo,span*.5);
+  const tailStart=(wingZ-root*.5+tailZ+tailRoot*.5)*.5;
+  geo.rotateX(Math.PI/2);geo.translate(0,thick*.5,0);
+  taperAircraftWing(geo,span*.5,{halfSpan:tailSpan*.5,startZ:tailStart});
   const body=new THREE.Mesh(geo,mat);body.castShadow=true;body.receiveShadow=true;g.add(body);
   g.userData.wingL=body;g.userData.wingR=body;g.userData.unifiedAirframe=body;return body;
 }
@@ -3221,10 +3224,9 @@ function destroyPlayerTank(tk,msg){
 }
 function tankFireTick(tk,dt){
   if(tk.cook>0){ tk.cook-=dt; if(tk.cook<=0){ destroyPlayerTank(tk,'Ammunition cook-off!'); return; } }
-  if(tk.fire>0){ tk.hp-=tk.fire*3*dt;
-    if(Math.random()<dt*9){ const wp=tankWP(tk); const c=Math.random()<0.4?0xff6a20:0x2a2a2a;
-      const sm=new THREE.Mesh(new THREE.SphereGeometry(0.4+Math.random()*0.4,6,6),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:0.7}));
-      sm.position.copy(wp).setY(wp.y+1.6); scene.add(sm); fx.push({mesh:sm,life:0.7,fade:true,grow:true,growRate:3,vel:new THREE.Vector3((Math.random()-0.5)*2,3,(Math.random()-0.5)*2)}); }
+  if(tk.fire>0){ tk.hp-=tk.fire*Math.max(6,(tk.maxhp||220)*0.03)*dt;                     // burning armour cooks off fast
+    burnFx(tankWP(tk).setY(tankWP(tk).y+0.9), 1.15, dt, tk.fire);
+    if(tk.fire>=3 && !tk.cook && Math.random()<dt*0.25) tk.cook=1.6;                       // an intense blaze can touch off the ammo
     tk.fireBurn=(tk.fireBurn||0)+dt; if(tk.fireBurn>6){ tk.fireBurn=0; tk.fire--; }
     if(tk.hp<=0){ destroyPlayerTank(tk,'Burned out!'); return; } }
 }
@@ -4238,6 +4240,11 @@ function stopDrive(){
 function updatePilot(dt){
   const P=piloting, def=P.plane.def, pa=P.plane, deckY=deckTopWorldY();
   P.heading=camYaw.v;   // so enemy flak can lead your aircraft
+  if(P.fire>0 && P.phase!=='takeoff'){                                    // your aircraft is ablaze — get out
+    P.hp-=P.fire*(P.maxhp||120)*0.04*dt; burnFx(P.pos,1.2,dt,P.fire+0.5);
+    P._fireT=(P._fireT||0)+dt; if(P._fireT>5){ P._fireT=0; P.fire--; }
+    if(P.hp<=0){ crashPlane('Burning aircraft went down!'); return; }
+    if(Math.random()<dt*1.1) flashPrompt('🔥 YOUR AIRCRAFT IS ON FIRE — press P to bail out!'); }
   // ---------- TAKEOFF ----------
   if(P.phase==='takeoff'){
     if(def.heli){ // helicopters lift straight up
@@ -4497,6 +4504,7 @@ function explodeAt(pos,team,dmg,rad,owner){
   targets.forEach(t=>{ if(!t) return; const tp=t===player?player.pos.clone().setY(player.def.deckY):t.pos;
     const d=tp.distanceTo(pos); const R=rad+(t.def.beam/2); if(d<R && (t===player? player.hp>0 : t.hp>0)) damageTarget(t,dmg*(1-d/R*0.6),owner,pos); });
   boom(pos, 0.5+rad*0.16);
+  igniteBlast(pos, rad);                 // the blast sets nearby flammable things ablaze
 }
 // ===== CRITICAL DAMAGE — hits can knock out specific systems, not just shave HP =====
 // systems: engine (slow/stop) · guns (turret KO) · radar (short range) · deck (carrier can't launch)
@@ -4555,12 +4563,12 @@ function critHurt(s,d){ // DoT from fire/flood — straight HP loss, never re-ro
 function tickCrit(s,dt){
   repairCompartments(s,dt);const c=s.crit; if(!c) return;
   // fire — hurts and can spread, but always burns down on its own
-  if(c.fire>0){ critHurt(s, c.fire*4*dt); if(!s.proxy)fireFx(s,dt);
-    if(Math.random()<dt*0.16*c.fire){ const r=Math.random();
-      if(r<0.4){ c.engine=Math.min(2,c.engine+1); critMsg(s,'🔥 fire reached the engine!'); }
-      else if(r<0.7){ c.guns=Math.min(2,c.guns+1); koTurret(s); critMsg(s,'🔥 fire reached a magazine!'); }
-      else c.fire=Math.min(3,c.fire+1); }
-    c.fireBurn+=dt; if(c.fireBurn>4){ c.fireBurn=0; c.fire--; if(c.fire<=0&&s===player) flashPrompt('Fire out.'); } }
+  if(c.fire>0){ critHurt(s, c.fire*Math.max(7, s.maxhp*0.017)*dt); if(!s.proxy)fireFx(s,dt);   // devastating: ~1.7%/level of max hull per second
+    if(Math.random()<dt*0.22*c.fire){ const r=Math.random();                                   // and it spreads readily
+      if(r<0.38){ c.engine=Math.min(2,c.engine+1); critMsg(s,'🔥 fire reached the engine!'); }
+      else if(r<0.66){ c.guns=Math.min(2,c.guns+1); koTurret(s); critMsg(s,'🔥 fire reached a magazine!'); }
+      else c.fire=Math.min(4,c.fire+1); }
+    c.fireBurn+=dt; if(c.fireBurn>4.5){ c.fireBurn=0; c.fire--; if(c.fire<=0&&s===player) flashPrompt('🧯 Fire out.'); } }
   // flooding — drains, but damage-control crews steadily bail it out (no longer needs a perfect lull)
   if(c.flood>0){ critHurt(s, c.flood*3*dt);
     c.floodT+=dt; if(c.floodT>5){ c.floodT=0; c.flood--; if(s===player) flashPrompt(c.flood>0?'Flooding slowing…':'💧 Flooding contained.'); } }
@@ -4577,19 +4585,68 @@ function tickCrit(s,dt){
 // a crippled engine still crawls (never a dead stop) so you can always limp to safety / the repair dock
 function engineFactor(s){ const c=s.crit; return !c?1 : c.engine>=2?0.2 : c.engine>=1?0.5 : 1; }
 function radarFactor(s){ return ((s.crit&&s.crit.radar)?0.6:1) * weatherVis(); }   // radar damage + fog/storm/night all shorten engagement range
-function fireFx(s,dt){ if(Math.random()<dt*9 && fx.length<MAX_FX-20){ const base=(s===player?player.pos:s.pos);
-  const p=base.clone().setY((s.def.deckY||3)+1+Math.random()*2).add(new THREE.Vector3((Math.random()-0.5)*s.def.beam,0,(Math.random()-0.5)*s.def.len*0.5));
-  if(Math.random()<0.45){ // licking flame — hot core cooling to red as it gutters out
-    const f=_spr(fireTex(),true); f.scale.setScalar(1.1+Math.random()*0.9); f.position.copy(p); scene.add(f);
-    fx.push({mesh:f,life:0.4+Math.random()*0.3,max:0.7,op:0.95,fade:true,grow:true,growRate:2.2,srot:(Math.random()-0.5)*2,
-      vel:new THREE.Vector3((Math.random()-0.5)*1.2,2.5+Math.random()*2,(Math.random()-0.5)*1.2),
-      c0:new THREE.Color(0xffe8b0),c1:new THREE.Color(0xc83208)});
-  } else { // oily black smoke climbing off the burning deck
-    const sm=_spr(smokeTex(),false); sm.scale.setScalar(1.4+Math.random()*1.2); sm.position.copy(p); scene.add(sm);
-    fx.push({mesh:sm,life:1.3+Math.random()*1.1,max:2.4,op:0.5,fade:true,grow:true,growRate:1.8,srot:(Math.random()-0.5)*0.8,
-      vel:new THREE.Vector3((Math.random()-0.5)*1.5,3.5+Math.random()*2.5,(Math.random()-0.5)*1.5),drag:0.4,
-      c0:new THREE.Color(0x141414),c1:new THREE.Color(0x606060)});
-  } } }
+// ===== FIRE — one devastating, easily-spread blaze system shared by ships, tanks, planes & buildings =====
+function fireParticle(pos,scale){
+  if(fx.length>MAX_FX-10) return;
+  const r=Math.random();
+  if(r<0.52){ // flame tongue: white-hot base cooling to deep red, licking upward and shrinking as it rises
+    const f=_spr(fireTex(),true); f.scale.setScalar((0.8+Math.random()*1.2)*scale);
+    f.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*1.1*scale,Math.random()*0.5*scale,(Math.random()-0.5)*1.1*scale));
+    scene.add(f);
+    fx.push({mesh:f,life:0.28+Math.random()*0.34,max:0.62,op:0.98,fade:true,grow:true,growRate:-1.7,srot:(Math.random()-0.5)*3.5,
+      vel:new THREE.Vector3((Math.random()-0.5)*1.5*scale,(3+Math.random()*3.2)*scale,(Math.random()-0.5)*1.5*scale),drag:1.1,
+      c0:new THREE.Color(0xfff4cc),c1:new THREE.Color(0xcc2a06)});
+  } else if(r<0.84){ // rolling oily black smoke
+    const sm=_spr(smokeTex(),false); sm.scale.setScalar((1.5+Math.random()*1.8)*scale);
+    sm.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*scale,scale*(0.7+Math.random()),(Math.random()-0.5)*scale));
+    scene.add(sm);
+    fx.push({mesh:sm,life:1.5+Math.random()*1.5,max:3,op:0.52,fade:true,grow:true,growRate:1.4,srot:(Math.random()-0.5)*0.8,
+      vel:new THREE.Vector3((Math.random()-0.5)*1.3,3.2+Math.random()*2.6,(Math.random()-0.5)*1.3),drag:0.4,
+      c0:new THREE.Color(0x0c0c0c),c1:new THREE.Color(0x565656)});
+  } else { // popping ember arcing out under gravity
+    const e=_spr(emberTex(),true); e.scale.setScalar((0.22+Math.random()*0.4)*scale);
+    e.position.copy(pos); scene.add(e);
+    fx.push({mesh:e,life:0.5+Math.random()*0.8,max:1.3,op:1,fade:true,grav:true,
+      vel:new THREE.Vector3((Math.random()-0.5)*8*scale,(4+Math.random()*8)*scale,(Math.random()-0.5)*8*scale),
+      c0:new THREE.Color(0xffe09a),c1:new THREE.Color(0xd8360a)}); }
+}
+function burnFx(pos,scale,dt,intensity){   // a sustained blaze: flames + smoke + a flickering warm glow
+  const rate=6+intensity*7; let n=0;
+  while(Math.random()<dt*rate && n<3){ fireParticle(pos,scale); n++; }
+  if(Math.random()<dt*(1.1+intensity*0.5) && fx.length<MAX_FX-3){
+    const l=new THREE.PointLight(0xff7326, 2+scale*0.8, 14+scale*8); l.position.copy(pos).setY(pos.y+1.4); scene.add(l);
+    fx.push({mesh:l,life:0.11+Math.random()*0.08,li:16,light:true}); }
+}
+// how readily a thing takes light — planes/fuel go up instantly, armoured ships resist
+function flammability(type){ return type==='plane'?1.05 : type==='tank'?0.9 : type==='unit'?0.78 : type==='harbor'?0.6 : 0.42; }
+function igniteEntity(ent,type){
+  if(!ent) return;
+  if(type==='ship'){ const c=critOf(ent); if(c.fire<4){ c.fire++; if(ent===player)critMsg(ent,'🔥 FIRE ABOARD — she\'s burning!'); } return; }
+  ent.fire=Math.min(type==='plane'?3:4,(ent.fire||0)+1);
+  if(type==='plane') ent.burning=true;
+}
+// an explosion sets nearby flammable things ablaze — scans ALL entity types, not just what it damaged
+function igniteBlast(pos,rad,hot){
+  hot=hot||1; const R=rad*1.5+7;
+  const tryIg=(ent,type,size,alive)=>{ if(!alive||!ent) return; const ep=(ent===player)?player.pos:(ent.pos||(ent.group&&ent.group.position)); if(!ep) return;
+    const d=ep.distanceTo(pos)-(size||0); if(d>R) return; const prox=1-Math.max(0,d)/R;
+    if(Math.random() < flammability(type)*prox*hot) igniteEntity(ent,type); };
+  enemies.forEach(e=>tryIg(e,'ship',e.def.beam/2,e.sinkT===0));
+  allies.forEach(a=>tryIg(a,'ship',a.def.beam/2,a.sinkT===0));
+  if(player&&player.hp>0&&!playerShipLost&&!landCampaignMode) tryIg(player,'ship',player.def.beam/2,true);
+  aiPlanes.forEach(p=>tryIg(p,'plane',2,p.hp>0));
+  if(piloting&&piloting.hp>0) tryIg(piloting,'plane',2,true);
+  playerTanks.forEach(tk=>{ if(tk.hp>0){ const wp=tankWP(tk); if(wp.distanceTo(pos)<R+2 && Math.random()<flammability('tank')*hot) igniteEntity(tk,'tank'); } });
+  if(drivingTank&&drivingTank.hp>0){ const wp=tankWP(drivingTank); if(wp.distanceTo(pos)<R+2 && Math.random()<flammability('tank')*hot) igniteEntity(drivingTank,'tank'); }
+  landUnits.forEach(u=>tryIg(u,u.kind==='tank'?'tank':'unit',Math.max(2,(u.footprint||4)*0.35),!u.dead));
+  [enemyHarbor,friendlyHarbor].forEach(h=>{ if(h&&h.hp>0) tryIg(h,'harbor',h.r*0.4,true); });
+}
+function fireFx(s,dt){   // ship blaze — scales with hull size and fire intensity
+  const c=s.crit; if(!c||c.fire<=0) return;
+  const base=(s===player?player.pos:s.pos), scale=Math.min(2.6,0.85+s.def.beam*0.14);
+  const p=base.clone().setY((s.def.deckY||3)+0.8).add(new THREE.Vector3((Math.random()-0.5)*s.def.beam*0.8,0,(Math.random()-0.5)*s.def.len*0.6));
+  burnFx(p,scale,dt,c.fire);
+}
 function damageTarget(t,dmg,owner,hitPos){
   if(t===player){ player.hp-=dmg; damageCompartment(player,dmg,hitPos); applyCrit(player,dmg); if(player.hp<=0){ player.hp=0; playerSunk(); } updateHUD(); return; }
   t.hp-=dmg; damageCompartment(t,dmg,hitPos); applyCrit(t,dmg); if(t.hp<=0 && t.sinkT===0){ t.hp=0; t.sinkT=0.001; spawnSalvage(t.pos.clone());
@@ -4617,6 +4674,7 @@ function blastAll(pos,dmg,rad,massive=false,spareHarbors=false){
   [...landUnits].forEach(u=>{ if(!u.dead) hurt(u.pos, Math.max(3,(u.footprint||4)*.35), x=>{ u.hp-=x;if(u.hp<=0)killLandUnit(u,massive); }); });
   if(!spareHarbors)[enemyHarbor,friendlyHarbor].forEach(h=>{ if(h&&h.hp>0) hurt(h.pos, h.r*0.5, x=>damageHarbor(h,x)); });
   if(massive)strategicBlastFx(pos,rad);else boom(pos,0.6+rad*0.16);
+  igniteBlast(pos, rad, massive?2.4:1.2);                 // bigger blasts light everything up
 }
 
 // =====================================================================
@@ -4739,7 +4797,12 @@ function parachuteFromAircraft(){
   const surf=footSurfaceAt(drop,20); footLand=landIdentity(surf);
   footPos.copy(drop);
   footPos.y=footLand?(landTop(surf||footLand)+EYE):(0.45+EYE);
-  player.pos.copy(footPos).setY(0);
+  // Bailing out leaves your ship behind — do NOT drag the whole warship across the map to your chute.
+  // If the ship is still afloat, abandoning it here mirrors the "lost while away" flow (hide it, recover at harbor).
+  if(!playerShipLost && !landCampaignMode && player && player.build && player.build.group){
+    playerShipLost=true; player.build.group.visible=false;
+  }
+  if(playerShipLost||landCampaignMode) player.pos.copy(footPos).setY(0);   // world anchor (minimap/sky/objectives) follows the pilot now
   const chute=new THREE.Mesh(new THREE.SphereGeometry(5,16,8,0,Math.PI*2,0,Math.PI/2),new THREE.MeshBasicMaterial({color:0xf2f2e8,transparent:true,opacity:.82,side:THREE.DoubleSide}));
   chute.position.copy(footPos).add(new THREE.Vector3(0,8,0));scene.add(chute);
   fx.push({mesh:chute,life:2.8,max:2.8,fade:true,op:.82,vel:new THREE.Vector3(0,-1.3,0)});
@@ -5063,6 +5126,10 @@ function spawnAIPlane(src, team, forceDef){
 }
 function updateAIPlane(p,dt){
   p.t+=dt; p.stateT+=dt;
+  if(p.fire>0){ p.hp-=p.fire*p.maxhp*0.05*dt; if(!p.proxy) burnFx(p.pos,1.1,dt,p.fire+0.5);   // a burning aircraft is doomed
+    p._fireT=(p._fireT||0)+dt; if(p._fireT>5){ p._fireT=0; p.fire--; }
+    if(p.hp<=0){ killAIPlane(p); return; } }
+  else if(p.hp<p.maxhp*0.3 && Math.random()<dt*0.12) igniteEntity(p,'plane');                  // battle damage can spark an engine fire
   const foe=1-p.team, pr=p.prof;
   // --- acquire a target: fighters dogfight, strike planes hunt surface (ships → harbor) ---
   let tgtPos=null, tgtAir=false, tgtY=6;
@@ -5222,6 +5289,10 @@ function groundAdvanceTarget(u,foe){
 }
 function updateLandUnit(u,dt){
   if(u.dead) return;
+  if(u.fire>0){ u.hp-=u.fire*Math.max(5,(u.maxhp||u.hp||100)*0.028)*dt;                       // burning emplacements/tanks cook down
+    burnFx(u.pos.clone().setY((u.pos.y||0)+1.4), u.kind==='tank'?1.1:1.5, dt, u.fire);
+    u._fireT=(u._fireT||0)+dt; if(u._fireT>5.5){ u._fireT=0; u.fire--; }
+    if(u.hp<=0){ killLandUnit(u); return; } }
   landTankWaterTick(u,dt); if(u.dead)return;
   const foe=1-u.team;
   if(u.needsPower&&!structurePowered(u)){if(u.light)u.light.material.opacity=.08;return;}
@@ -5348,6 +5419,10 @@ function killLandUnit(u,quiet=false){
 }
 function updateHarbors(dt){
   [enemyHarbor,friendlyHarbor].forEach(h=>{ if(!h||h.hp<=0) return;
+    if(h.fire>0){ damageHarbor(h, h.fire*Math.max(10,(h.maxhp||2600)*0.011)*dt);            // a burning harbour bleeds structure
+      for(let k=0;k<Math.min(3,h.fire);k++) burnFx(h.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*h.r,4+Math.random()*6,(Math.random()-0.5)*h.r)), 2.4, dt, h.fire);
+      h._fireT=(h._fireT||0)+dt; if(h._fireT>7){ h._fireT=0; h.fire--; }
+      if(h.hp<=0) return; }
     if(h.beacon) h.beacon.material.emissiveIntensity=0.5+Math.abs(Math.sin(t2*2))*0.6;
     // animated dry dock — a hull steadily takes shape, then launches and a new keel is laid
     const d=h.dock; if(d){ d.t+=dt/16;
