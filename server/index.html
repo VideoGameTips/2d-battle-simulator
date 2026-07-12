@@ -3249,15 +3249,22 @@ function updateTank(dt){
   const trackF=bothTracks?0:Math.max(0,1-(pr.trackL+pr.trackR)*0.13);
   const turn=(tk.turn||1.4)*driverF*Math.max(0.25,1-(pr.trackL+pr.trackR)*0.07);
   const sp=(tk.speed||18)*engF*trackF;
-  let mv=0; if(keys['KeyW'])mv+=1; if(keys['KeyS'])mv-=0.6*(1-pr.trans*0.25);   // damaged transmission = poor reverse
+  // differential-track drive: W/S run both tracks, A drives the LEFT track, D the RIGHT track (pivot turns like a real tank)
+  let L=0,R=0;
+  if(keys['KeyW']){ L+=1; R+=1; }
+  if(keys['KeyS']){ const r=0.7*(1-pr.trans*0.25); L-=r; R-=r; }   // damaged transmission = poor reverse
+  if(keys['KeyA']){ L-=1; R+=1; }
+  if(keys['KeyD']){ L+=1; R-=1; }
+  L=Math.max(-1,Math.min(1,L))*(1-Math.min(1,pr.trackL*0.34));     // a wrecked track puts out no drive → the tank slews toward it
+  R=Math.max(-1,Math.min(1,R))*(1-Math.min(1,pr.trackR*0.34));
+  const mv=(L+R)/2, steer=(L-R)/2;                                 // net forward = both tracks; turn = their difference
   // crew repair tracks & fight fires while halted (hold R)
   if(keys['KeyR'] && mv===0){ tk.repT=(tk.repT||0)+dt;
     if(tk.fire>0){ if(tk.repT>0.8){ tk.repT=0; tk.fire--; flashPrompt(tk.fire>0?'Fighting the fire…':'🧯 Fire out.'); } }
     else if(tk.repT>2.6){ tk.repT=0; const t=['trackL','trackR'].filter(k=>pr[k]>0).sort((a,b)=>pr[b]-pr[a])[0];
       if(t){ pr[t]--; flashPrompt('🔧 '+TPART_NAME[t]+' repaired'); } }
   } else tk.repT=0;
-  if(keys['KeyA']) tk.heading+=turn*dt; if(keys['KeyD']) tk.heading-=turn*dt;
-  tk.heading += (pr.trackR-pr.trackL)*0.06*dt;               // a weaker track pulls the tank sideways
+  tk.heading -= steer*turn*dt*2.0;                           // differential-track steering — pivots in place when the tracks counter-rotate
   let wp;
   if(tk.onDeck){
     const g=tk.group;
@@ -3275,6 +3282,7 @@ function updateTank(dt){
     wp=tk.pos.clone();
   }
   playerTankWaterTick(tk,dt); if(drivingTank!==tk)return;
+  checkCripple(tk,false);                                    // your tank buckles/scorches as it's hit (no detach — keep tracks/turret)
   if(tk.fireCd>0) tk.fireCd-=dt;
   const canFire = pr.barrel<3 && pr.breech<3;                // destroyed barrel/breech = weapon dead
   if(mouseDownFire && tk.fireCd<=0 && canFire){
@@ -3450,6 +3458,7 @@ function nemesisLabel(text){
   const w=Math.min(72,text.length*4.2+24); sp.scale.set(w,w*0.25,1); return sp;
 }
 function attachNemesisLabel(s,nem){
+  if(!s||!s.build||!s.build.group) return;                 // proxied/model-less ship — skip the floating nameplate
   const lab=nemesisLabel(nem.name); lab.position.set(0,(s.def.deckY||6)+(s.def.boss?30:15),0);
   s.build.group.add(lab); s.nameplate=lab;
 }
@@ -3690,7 +3699,7 @@ function updateAlly(a,dt){
   if(a.sinkT>0){ a.sinkT+=dt; if(a.build){ a.build.group.position.y=-a.sinkT*2.2; a.build.group.rotation.z=Math.min(0.5,a.sinkT*0.4); }
     if(a.sinkT>3){ a.dead=true; if(a.build)splashAt(a.pos.clone(),3); }
     return; }
-  tickCrit(a,dt);
+  tickCrit(a,dt); checkCripple(a,true);
   // objective by role: support heals, roles coordinate, else hunt the enemy
   const tgtShip=nearestEnemyShipTo(a.pos),patient=a.def.support?nearestDamagedShip(0,a.pos,a):null;
   if(a._sos>0)a._sos-=dt;
@@ -4646,6 +4655,39 @@ function burnFx(pos,scale,dt,intensity){   // a sustained blaze: flames + smoke 
     const l=new THREE.PointLight(0xff7326, 2+scale*0.8, 14+scale*8); l.position.copy(pos).setY(pos.y+1.4); scene.add(l);
     fx.push({mesh:l,life:0.11+Math.random()*0.08,li:16,light:true}); }
 }
+// ===== BATTLE DAMAGE — models buckle, scorch and shed parts as they get wrecked =====
+function crippleParts(ent, allowDetach){
+  const g = ent.build ? ent.build.group : ent.group; if(!g) return;
+  const turret = ent.turret || g.userData.turret;
+  const kids = g.children.filter(c=>c.isMesh && c!==turret);
+  if(kids.length<2) return;
+  const stage = ent._dmgStage||1;
+  // buckle & scorch a handful of panels so the silhouette reads mangled, not flat
+  for(let i=0;i<2+stage;i++){ const c=kids[(Math.random()*kids.length)|0];
+    c.rotation.x += (Math.random()-0.5)*0.4; c.rotation.z += (Math.random()-0.5)*0.4; c.position.y -= Math.random()*0.2;
+    if(c.material && c.material.color && !c.userData._char){ c.userData._char=1; c.material=c.material.clone();
+      c.material.color.multiplyScalar(0.42);                                            // charred/blackened
+      if(c.material.roughness!=null) c.material.roughness=Math.min(1,c.material.roughness+0.35);
+      if(c.material.metalness!=null) c.material.metalness=Math.max(0,c.material.metalness-0.2); } }
+  // heavier damage tears a piece clean off (never the biggest mesh = main hull, nor the turret)
+  if(allowDetach && stage>=2 && fx.length<MAX_FX-4){
+    let big=null,bigR=-1; kids.forEach(c=>{ if(!c.geometry.boundingSphere) c.geometry.computeBoundingSphere();
+      const r=c.geometry.boundingSphere?c.geometry.boundingSphere.radius:0; if(r>bigR){bigR=r;big=c;} });
+    const cands=kids.filter(c=>c!==big); const p=cands[(Math.random()*cands.length)|0]; if(!p) return;
+    const wp=p.getWorldPosition(new THREE.Vector3()), wq=p.getWorldQuaternion(new THREE.Quaternion());
+    g.remove(p); p.position.copy(wp); p.quaternion.copy(wq); scene.add(p);
+    fx.push({mesh:p,life:3.5,max:3.5,op:1,fade:true,grav:true,spin:4+Math.random()*7,
+      vel:new THREE.Vector3((Math.random()-0.5)*7,3+Math.random()*5,(Math.random()-0.5)*7)});
+    burnFx(wp.clone(),1,0.4,1); }                                                        // a puff of flame where it tore free
+}
+// once per crossed HP threshold, wreck the model a little more
+function checkCripple(ent, allowDetach){
+  if(!ent) return; const mx=ent.maxhp; if(!mx) return;
+  const g=ent.build?ent.build.group:ent.group; if(!g||ent.proxy||!g.visible) return;
+  const hp=(ent===player?player.hp:ent.hp);
+  const want = hp/mx<=0.34?2 : hp/mx<=0.66?1 : 0;
+  if(want>(ent._dmgStage||0)){ ent._dmgStage=want; crippleParts(ent, allowDetach); }
+}
 // how readily a thing takes light — planes/fuel go up instantly, armoured ships resist
 function flammability(type){ return type==='plane'?1.05 : type==='tank'?0.9 : type==='unit'?0.78 : type==='harbor'?0.6 : 0.42; }
 function igniteEntity(ent,type){
@@ -4740,7 +4782,7 @@ function update(dt,t){
   { const elv=Math.max(0.12,(-0.12+1.05*(weather.day!=null?weather.day:1))*0.9);   // light follows the sun's arc across the day
     sun.position.set(player.pos.x+Math.cos(elv)*160, Math.sin(elv)*260+40, player.pos.z+Math.cos(elv)*105); }
   sun.target.position.set(player.pos.x, 0, player.pos.z); sun.target.updateMatrixWorld();
-  if(player.hp>0) tickCrit(player,dt);   // your ship can be burning / flooding / crippled too
+  if(player.hp>0){ tickCrit(player,dt); checkCripple(player,false); }   // your ship can be burning / flooding / crippled too (no detach — keep mounts intact)
   // --- placed turrets: auto-gunner when unmanned, manual when manned (knocked-out guns sit dead) ---
   placed.forEach(pl=>{ if(pl.cd>0)pl.cd-=dt; if(pl.recoil>0)pl.recoil-=dt*3;
     if(pl.ko){ pl.pitch=-0.32; }                                        // dead turret droops its barrel
@@ -4991,7 +5033,7 @@ function updateEnemy(e,dt){
   shipEconomy(e,dt);
   if(e.sinkT>0){ e.sinkT+=dt; if(e.build){ e.build.group.position.y=-e.sinkT*2.2; e.build.group.rotation.z=Math.min(0.5,e.sinkT*0.4); }
     if(e.sinkT>3){ e.dead=true; if(e.build)splashAt(e.pos.clone(),3); } return; }
-  tickCrit(e,dt);
+  tickCrit(e,dt); checkCripple(e,true);
   // --- sail: keep a standoff range from the nearest blue ship (player or ally), don't ram ---
   const patient=e.def.support?nearestDamagedShip(1,e.pos,e):null;
   const blue=patient?patient.pos:(e.def.support?(enemyHarbor?enemyHarbor.pos:new THREE.Vector3()):nearestBlue(e.pos));
@@ -5326,6 +5368,7 @@ function groundAdvanceTarget(u,foe){
 }
 function updateLandUnit(u,dt){
   if(u.dead) return;
+  checkCripple(u,true);                                                                         // emplacements/enemy tanks buckle & shed parts
   if(u.fire>0){ u.hp-=u.fire*Math.max(5,(u.maxhp||u.hp||100)*0.028)*dt;                       // burning emplacements/tanks cook down
     burnFx(u.pos.clone().setY((u.pos.y||0)+1.4), u.kind==='tank'?1.1:1.5, dt, u.fire);
     u._fireT=(u._fireT||0)+dt; if(u._fireT>5.5){ u._fireT=0; u.fire--; }
@@ -5456,6 +5499,7 @@ function killLandUnit(u,quiet=false){
 }
 function updateHarbors(dt){
   [enemyHarbor,friendlyHarbor].forEach(h=>{ if(!h||h.hp<=0) return;
+    checkCripple(h,true);                                                                    // a pounded harbour buckles & sheds structure
     if(h.fire>0){ damageHarbor(h, h.fire*Math.max(10,(h.maxhp||2600)*0.011)*dt);            // a burning harbour bleeds structure
       for(let k=0;k<Math.min(3,h.fire);k++) burnFx(h.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*h.r,4+Math.random()*6,(Math.random()-0.5)*h.r)), 2.4, dt, h.fire);
       h._fireT=(h._fireT||0)+dt; if(h._fireT>7){ h._fireT=0; h.fire--; }
@@ -5612,7 +5656,7 @@ function updatePrompt(){
   if(promptT>0){ promptT-=0.016; msg=promptMsg; }
   else if(capIsl){ msg=capIsl.contested?'🏝 '+capIsl.name.toUpperCase()+' CONTESTED — clear enemy ships and defenders':
       capIsl.captureTeam===0?'🏝 SECURING '+capIsl.name.toUpperCase()+' — '+Math.floor(capIsl.capture/ISLAND_CAPTURE_TIME*100)+'%':'🏝 HOLD POSITION TO CAPTURE '+capIsl.name.toUpperCase(); }
-  else if(drivingTank){ const t=drivingTank; msg='Tank '+Math.max(0,Math.ceil(t.hp/t.maxhp*100))+'% — W/S drive · Click fire · R repair · '+(t.onDeck?'G land ashore':(playerShipLost?'Ship lost':'G re-embark'))+' · T view · E dismount'+tankPartSummary(t); }
+  else if(drivingTank){ const t=drivingTank; msg='Tank '+Math.max(0,Math.ceil(t.hp/t.maxhp*100))+'% — W/S tracks · A/D pivot · Click fire · R repair · '+(t.onDeck?'G land ashore':(playerShipLost?'Ship lost':'G re-embark'))+' · T view · E dismount'+tankPartSummary(t); }
   else if(onFoot){ const near=!landCampaignMode&&Math.hypot(footPos.x-player.pos.x,footPos.z-player.pos.z)<player.build.halfLen+18, hp=' · HP '+Math.ceil(footHP)+'%', ftk=nearestFieldTank();
     if(playerShipLost) msg=(nearFriendlyHarborForReplacement()?'Harbor reached — press P for a replacement ship':'Ship lost — swim/walk back to your harbor')+hp+' · WASD '+(footLand?'walk':'swim')+' · Click: '+(HANDHELD[equippedGun]||HANDHELD.pistol).name;
     else msg=(ftk?'Press E to crew '+(ftk.name||'tank')+' · ':'')+(landCampaignMode?'Airborne assault':(footLand?'Ashore':'Swimming'))+hp+' — WASD '+(footLand?'walk':'swim')+' · Click: '+(HANDHELD[equippedGun]||HANDHELD.pistol).name+' · Q switch'+(footLand?' · B build':'') + (near?'   ·   G re-board':''); }
@@ -5763,7 +5807,7 @@ document.getElementById('tacticalCanvas').addEventListener('click',tacticalMapCl
 document.getElementById('minimap').addEventListener('click',()=>toggleTacticalMap(true));
 function updateMode(){
   const el=document.getElementById('mode');
-  el.innerHTML = drivingTank ? '<b>TANK</b><br>W/S drive · A/D turn<br>Mouse aim · Click fire · E dismount'
+  el.innerHTML = drivingTank ? '<b>TANK</b><br>W/S both tracks · A/D pivot<br>Mouse aim · Click fire · E dismount'
     : buildOpen ? '<b>ISLAND ENGINEERS</b><br>Click a defense to build<br>B to close'
     : onFoot ? (playerShipLost?'<b>SURVIVOR</b><br>Get to friendly harbor<br>P replacement ship'
         : landCampaignMode?'<b>AIRBORNE ASSAULT</b><br>WASD walk/swim · Click = rifle · B build<br>E board tank · Capture command posts'
