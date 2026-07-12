@@ -1263,7 +1263,7 @@ function buildLand(kind,team,pos,type){
     const mant=mkBox(0.7,0.6,0.5,SILVER(0x44483a)); mant.position.z=T.turL/2; tur.add(mant);
     const barrel=mkCyl(T.barR,T.barR*1.1,T.barL,SILVER(0x9aa0a8)); barrel.rotation.x=Math.PI/2; barrel.position.z=T.turL/2+T.barL/2; tur.add(barrel);
     const flag=mkBox(0.1,0.7,0.5,new THREE.MeshStandardMaterial({color:tcol,emissive:tcol,emissiveIntensity:0.4})); flag.position.set(0,1.1,-T.turL/2); tur.add(flag);
-    const mk=teamMarker(team,6.2);mk.position.set(0,4.2,0);g.add(mk);
+    const mk=teamMarker(team,6.2);mk.position.set(0,4.2,0);g.add(mk);g.userData.teamMarker=mk;g.userData.markerScale=6.2;
     // detail: commander cupola, coaxial MG, side fenders, exhaust, antenna
     const cup=mkCyl(0.34,0.36,0.32,body,10); cup.position.set(-T.turW*0.22,0.55,-T.turL*0.18); tur.add(cup);
     const hatch=mkCyl(0.3,0.3,0.06,SILVER(0x33372a),10); hatch.position.set(-T.turW*0.22,0.74,-T.turL*0.18); tur.add(hatch);
@@ -1402,15 +1402,18 @@ function buildLand(kind,team,pos,type){
     const rifle=mkCyl(.045,.045,1.35,gun,7);rifle.rotation.x=Math.PI/2;rifle.rotation.z=-.14;rifle.position.set(.24,1.18,.54);g.add(rifle);
     const pack=mkBox(.42,.54,.18,helmet);pack.position.set(0,1.06,-.32);g.add(pack);
     const l1=mkBox(.16,.65,.16,cloth),l2=mkBox(.16,.65,.16,cloth);l1.position.set(-.18,.34,0);l2.position.set(.18,.34,0);g.add(l1);g.add(l2);
-    const mk=teamMarker(team,4.8);mk.position.set(0,3.0,0);g.add(mk);
+    const mk=teamMarker(team,4.8);mk.position.set(0,3.0,0);g.add(mk);g.userData.teamMarker=mk;g.userData.markerScale=4.8;
     range=115; dmg=7; hp=55; fireRate=0.48; g.userData.barrelLen=0.5;
   }
+  if(!g.userData.teamMarker&&range>0&&dmg>0){const ms=kind==='supergun'||kind==='nukesilo'?10:6.2,mk=teamMarker(team,ms);
+    mk.position.set(0,Math.max(5,(STRUCTS[kind]&&STRUCTS[kind].scale||1)*4),0);g.add(mk);g.userData.teamMarker=mk;g.userData.markerScale=ms;}
   addIslandBuildingGraphicDetails(g,kind,team);
   scene.add(g);
   const u={ kind, team, pos:pos.clone(), hp, maxhp:hp, group:g, turret:g.userData.turret, barrelLen:g.userData.barrelLen||1, fireT:Math.random()*2, range, dmg, fireRate, tank:g.userData.tank, aa:g.userData.aa,
     artillery:g.userData.artillery, silo:g.userData.silo, nukesilo:g.userData.nukesilo, siloMissile:g.userData.siloMissile,
     torp:g.userData.torp, tesla:g.userData.tesla, radar:g.userData.radar, wall:g.userData.wall, coil:g.userData.coil, dish:g.userData.dish,
     needsPower:!!(STRUCTS[kind]&&STRUCTS[kind].power),footprint:(STRUCTS[kind]&&STRUCTS[kind].footprint)||4,light:g.userData.light,
+    marker:g.userData.teamMarker,markerScale:g.userData.markerScale||0,revealT:0,
     ammoLeft:kind==='silo'?6:kind==='rocket'?10:kind==='supergun'?3:kind==='fortress'?8:null };
   if(kind==='nukesilo')u.fireT=200;
   u[kind]=true;return u;
@@ -3557,10 +3560,14 @@ function updateFogOfWar(dt){
   sonarCooldown=Math.max(0,sonarCooldown-dt);sonarPulse=Math.max(0,sonarPulse-dt);
   enemies.forEach(e=>{if(e.build)e.build.group.visible=enemyDetected(e);});
   landUnits.forEach(u=>{if(u.team===1&&u.group){
+    u.revealT=Math.max(0,(u.revealT||0)-dt);
     const sameIsland=onFoot&&footLand&&u.island===footLand;
     const groundTheater=!!(window._MAP&&window._MAP.ground);
-    const close=groundTheater&&u.pos.distanceTo(activePlayerWorldPos())<1700;
-    u.group.visible=sameIsland||close||enemyDetectedAt(u.pos,groundTheater?1.8:1);
+    const dist=u.pos.distanceTo(activePlayerWorldPos());
+    const close=groundTheater&&dist<1700,threatening=dist<Math.max(170,Math.min(1800,(u.range||0)+100));
+    const seen=u.revealT>0||threatening||sameIsland||close||enemyDetectedAt(u.pos,groundTheater?1.8:1);
+    u.group.visible=seen;
+    if(u.marker){const pulse=u.revealT>0?1.2+Math.abs(Math.sin(t2*9))*.35:1,sc=(u.markerScale||5)*pulse;u.marker.scale.set(sc,sc,1);}
   }});
   aiPlanes.forEach(p=>{if(p.team!==1)return;const seen=enemyDetectedAt(p.pos,1.15);p.group.visible=seen;if(p.marker)p.marker.visible=seen;});
 }
@@ -4426,6 +4433,8 @@ function fireTurret(pl, aim){
 }
 function spawnShell(w,pos,dir,team,owner,enemyArc,velOverride){
   while(shells.length>=MAX_SHELLS) removeShellAt(0);
+  // Firing breaks concealment: no more tracers appearing to come from an innocent tree.
+  if(owner&&owner.team===1&&owner.group&&owner.kind){owner.revealT=Math.max(owner.revealT||0,4);owner.group.visible=true;}
   let geo, col=w.col||0xffe0a0;
   if(w.nuclear){geo=new THREE.CylinderGeometry(1.2,1.55,8,18);}
   else if(w.strategic){geo=new THREE.CylinderGeometry(.65,.9,3.4,14);}
