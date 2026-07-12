@@ -1813,7 +1813,8 @@ function buildCockpitView(def){
   box(.12,1.35,.12,edge,-.78,.18,-.77,-.1,0,-.25);
   box(.12,1.35,.12,edge,.78,.18,-.77,-.1,0,.25);
   box(1.45,.1,.12,edge,0,.76,-.88,0,0,0);
-  box(.09,.85,.09,edge,0,.39,-.91,-.18,0,0);
+  // Upper-only center brace: keeps the canopy structure without crossing the HUD aimer.
+  box(.07,.4,.07,edge,0,.56,-.91,-.18,0,0);
   // Three multi-function displays with bezels, soft keys and distinct symbology.
   const labels=heavy?['NAV','ENGINE','BOMB']:heli?['ROTOR','TARGET','ENGINE']:['RADAR','FLIGHT','WEAPON'];
   for(let i=0;i<3;i++){
@@ -3133,7 +3134,7 @@ function buildAndPushLand(kind,team,pos,yOverride,islOverride){
   landUnits.push(u); if(kind==='radar') _radar[team]++; return u; }
 // ---------- piloted (drivable) tanks ----------
 function buildDeckTank(localPos, type){
-  const u=buildLand('tank',0,new THREE.Vector3(0,0,0),type); const T=u.tank||TANKS.sherman;
+  const u=buildLand('tank',0,new THREE.Vector3(0,0,0),type); const T=u.group.userData.tank||TANKS.sherman;   // u.tank is clobbered to `true` by buildLand's u[kind]=true flag; the def lives on userData
   scene.remove(u.group); player.build.group.add(u.group); u.group.position.copy(localPos);
   playerTanks.push({ group:u.group, heading:0, onDeck:true, fireCd:0, turret:u.turret, barrelLen:u.barrelLen||3,
     name:T.name, dmg:T.dmg, fireRate:T.fireRate, speed:T.speed, turn:T.turn,
@@ -3141,7 +3142,7 @@ function buildDeckTank(localPos, type){
     hp:T.hp, maxhp:T.hp, sloped:!!T.sloped, parts:initTankParts(), fire:0, cook:0 });
 }
 function buildGroundPlayerTank(worldPos,type,isl){
-  const u=buildLand('tank',0,worldPos.clone(),type); const T=u.tank||TANKS.sherman;
+  const u=buildLand('tank',0,worldPos.clone(),type); const T=u.group.userData.tank||TANKS.sherman;   // u.tank is clobbered to `true` by buildLand's u[kind]=true flag; the def lives on userData
   u.group.position.copy(worldPos); u.group.rotation.y=camYaw.v;
   playerTanks.push({ group:u.group, heading:camYaw.v, onDeck:false, pos:worldPos.clone(), island:isl||islandOfPos(worldPos), fireCd:0, turret:u.turret, barrelLen:u.barrelLen||3,
     name:T.name, dmg:T.dmg, fireRate:T.fireRate, speed:T.speed, turn:T.turn,

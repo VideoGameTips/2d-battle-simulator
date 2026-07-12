@@ -1813,7 +1813,8 @@ function buildCockpitView(def){
   box(.12,1.35,.12,edge,-.78,.18,-.77,-.1,0,-.25);
   box(.12,1.35,.12,edge,.78,.18,-.77,-.1,0,.25);
   box(1.45,.1,.12,edge,0,.76,-.88,0,0,0);
-  box(.09,.85,.09,edge,0,.39,-.91,-.18,0,0);
+  // Upper-only center brace: keeps the canopy structure without crossing the HUD aimer.
+  box(.07,.4,.07,edge,0,.56,-.91,-.18,0,0);
   // Three multi-function displays with bezels, soft keys and distinct symbology.
   const labels=heavy?['NAV','ENGINE','BOMB']:heli?['ROTOR','TARGET','ENGINE']:['RADAR','FLIGHT','WEAPON'];
   for(let i=0;i<3;i++){
@@ -2427,14 +2428,14 @@ function steerClearOfShips(me,myPos,myDef,desired){   // bend the desired headin
     if(d<rr && d>0.01){ const away=Math.atan2(dx,dz);
       let diff=away-adj; while(diff>Math.PI)diff-=6.283; while(diff<-Math.PI)diff+=6.283;
       adj+=diff*Math.min(0.8,1-d/rr); } };
-  if(player&&player.hp>0&&!player.submerged) scan(player,player.pos,player.def);
+  if(playerShipTargetable())scan(player,player.pos,player.def);
   allies.forEach(a=>{ if(a.sinkT===0) scan(a,a.pos,a.def); });
   enemies.forEach(e=>{ if(e.sinkT===0) scan(e,e.pos,e.def); });
   return adj;
 }
 function shipCollisions(dt){
   const list=[];
-  if(player&&player.hp>0&&!player.submerged&&player.pos) list.push({s:player,pos:player.pos,def:player.def,pl:true});
+  if(playerShipTargetable()&&player.pos)list.push({s:player,pos:player.pos,def:player.def,pl:true});
   allies.forEach(a=>{ if(a.sinkT===0) list.push({s:a,pos:a.pos,def:a.def,ally:true}); });
   enemies.forEach(e=>{ if(e.sinkT===0) list.push({s:e,pos:e.pos,def:e.def}); });
   for(let i=0;i<list.length;i++) for(let j=i+1;j<list.length;j++){
@@ -3133,7 +3134,7 @@ function buildAndPushLand(kind,team,pos,yOverride,islOverride){
   landUnits.push(u); if(kind==='radar') _radar[team]++; return u; }
 // ---------- piloted (drivable) tanks ----------
 function buildDeckTank(localPos, type){
-  const u=buildLand('tank',0,new THREE.Vector3(0,0,0),type); const T=u.tank||TANKS.sherman;
+  const u=buildLand('tank',0,new THREE.Vector3(0,0,0),type); const T=u.group.userData.tank||TANKS.sherman;   // u.tank is clobbered to `true` by buildLand's u[kind]=true flag; the def lives on userData
   scene.remove(u.group); player.build.group.add(u.group); u.group.position.copy(localPos);
   playerTanks.push({ group:u.group, heading:0, onDeck:true, fireCd:0, turret:u.turret, barrelLen:u.barrelLen||3,
     name:T.name, dmg:T.dmg, fireRate:T.fireRate, speed:T.speed, turn:T.turn,
@@ -3141,7 +3142,7 @@ function buildDeckTank(localPos, type){
     hp:T.hp, maxhp:T.hp, sloped:!!T.sloped, parts:initTankParts(), fire:0, cook:0 });
 }
 function buildGroundPlayerTank(worldPos,type,isl){
-  const u=buildLand('tank',0,worldPos.clone(),type); const T=u.tank||TANKS.sherman;
+  const u=buildLand('tank',0,worldPos.clone(),type); const T=u.group.userData.tank||TANKS.sherman;   // u.tank is clobbered to `true` by buildLand's u[kind]=true flag; the def lives on userData
   u.group.position.copy(worldPos); u.group.rotation.y=camYaw.v;
   playerTanks.push({ group:u.group, heading:camYaw.v, onDeck:false, pos:worldPos.clone(), island:isl||islandOfPos(worldPos), fireCd:0, turret:u.turret, barrelLen:u.barrelLen||3,
     name:T.name, dmg:T.dmg, fireRate:T.fireRate, speed:T.speed, turn:T.turn,
@@ -3473,14 +3474,31 @@ function deployNemesis(){
     flashPrompt('☠ NEMESIS — '+nem.name+', '+nem.title); if(typeof sfxAlarm==='function') sfxAlarm(); }, 2600);
 }
 function nearestEnemyShipTo(pos){ let b=null,bd=1e9; enemies.forEach(e=>{ if(e.sinkT>0)return; const d=e.pos.distanceTo(pos); if(d<bd){bd=d;b=e;} }); return b; }
-function nearestBlue(pos){ // for enemy *navigation*: nearest of player + allies (a dived sub is invisible)
-  let best = (player&&player.hp>0&&!player.submerged)?player.pos:null, bd = best?best.distanceTo(pos):1e9;
-  allies.forEach(a=>{ if(a.sinkT>0)return; const d=a.pos.distanceTo(pos); if(d<bd){bd=d;best=a.pos;} });
+// ============ UNIFIED TARGETING — everything is just a combatant with a team ============
+function playerShipExists(){return !!(player&&player.hp>0&&!playerShipLost&&!landCampaignMode&&player.build&&player.build.group&&player.build.group.visible);}
+function playerShipTargetable(){ return playerShipExists()&&!player.submerged; }
+// The captain's live body when it is separate from the ship. Field tanks are
+// also enumerated independently so an uncrewed purchased tank remains real.
+function activePlayerCombatant(){
+  if(piloting&&piloting.hp>0) return {activePlayer:true,kind:'plane',entity:piloting,pos:piloting.pos,vel:piloting.vel||null,radius:3.6,hard:true};
+  if(drivingTank&&drivingTank.hp>0&&!drivingTank.onDeck){const p=tankWP(drivingTank);return {activePlayer:true,kind:'tank',entity:drivingTank,pos:p,vel:null,radius:3.4,hard:true};}
+  if(onFoot&&footHP>0) return {activePlayer:true,kind:footLand?'foot':'swimmer',entity:null,pos:footPos,vel:null,radius:2.2,hard:false};
+  return null;
+}
+function hurtActivePlayerCombatant(c,dmg,from){
+  if(!c||dmg<=0)return;
+  if(c.kind==='plane'){if(piloting&&c.entity===piloting)hurtPlayerPlane(dmg);}
+  else if(c.kind==='tank'){if(c.entity&&c.entity.hp>0)hurtPlayerTank(c.entity,dmg,from,false);}
+  else if(onFoot&&footHP>0)damageFoot(dmg,from);
+}
+function nearestBlue(pos){ // strategic ship navigation: prefer real ships; only fall back to a stranded captain
+  let best=playerShipTargetable()?player.pos:null,bd=best?best.distanceTo(pos):1e9;
+  allies.forEach(a=>{if(a.sinkT>0)return;const d=a.pos.distanceTo(pos);if(d<bd){bd=d;best=a.pos;}});
+  if(!best){const c=activePlayerCombatant();if(c)best=c.pos;}
   return best||(friendlyHarbor?friendlyHarbor.pos:new THREE.Vector3());
 }
-// ============ UNIFIED TARGETING — everything is just a combatant with a team ============
 function shipsOf(team){ const r=[];
-  if(team===0){ if(player&&player.hp>0&&!player.submerged) r.push(player); allies.forEach(a=>{ if(a.sinkT===0) r.push(a); }); }  // submerged sub is unspotted
+  if(team===0){ if(playerShipTargetable()) r.push(player); allies.forEach(a=>{ if(a.sinkT===0) r.push(a); }); }  // hidden/lost ship and submerged sub are not contacts
   else enemies.forEach(e=>{ if(e.sinkT===0) r.push(e); });
   return r; }
 const SHIP_PROXY_UNLOAD_DISTANCE=4600;
@@ -3502,12 +3520,7 @@ function destroyShipVisual(s){
   if(s){ s.build=null; s.proxy=false; }
 }
 function activePlayerWorldPos(){
-  if(piloting&&piloting.pos) return piloting.pos;
-  if(drivingTank){
-    if(!drivingTank.onDeck&&drivingTank.pos) return drivingTank.pos;
-    if(drivingTank.group) return drivingTank.group.getWorldPosition(new THREE.Vector3());
-  }
-  if(onFoot) return footPos;
+  const c=activePlayerCombatant();if(c)return c.pos;
   return player.pos;
 }
 function enemyDetectedAt(pos,stealth=1){
@@ -3589,15 +3602,25 @@ function nearestPlaneOf(team,p){ let b=null,bd=1e9;
   shells.forEach(m=>{if(m.nuclear&&!m.detonated&&m.team===team&&m.hp>0){const d=m.pos.distanceTo(p);if(d<bd){bd=d;b=m;}}});
   return b; }
 function nearestAnyOf(team,p){ const s=nearestShipOf(team,p), a=nearestPlaneOf(team,p);
-  if(!s) return a; if(!a) return s; return s.pos.distanceTo(p)<=a.pos.distanceTo(p)?s:a; }
+  let best=s||a,bd=best?best.pos.distanceTo(p):1e9;
+  if(s&&a){const ad=a.pos.distanceTo(p);if(ad<bd){best=a;bd=ad;}}
+  // Homing/general missiles may lock a real armoured field target, but never a lone person or swimmer.
+  if(team===0){const tk=nearestPlayerTank(p);if(tk){const d=tankWP(tk).distanceTo(p);if(d<bd){best={activePlayer:tk===drivingTank,kind:'tank',entity:tk,pos:tankWP(tk),vel:null,radius:3.4,hard:true};}}}
+  return best; }
 function harborOf(team){ return team===0?friendlyHarbor:enemyHarbor; }
 function nearestLandOf(team,p){ let b=null,bd=1e9; landUnits.forEach(u=>{ if(u.team===team&&!u.dead){ const d=u.pos.distanceTo(p); if(d<bd){bd=d;b=u;} } }); return b; }
+function nearestPlayerTank(p){let b=null,bd=1e9;playerTanks.forEach(tk=>{if(tk.onDeck||tk.hp<=0)return;const wp=tankWP(tk),d=wp.distanceTo(p);if(d<bd){bd=d;b=tk;}});return b;}
 // nearest opposing SURFACE objective (ship → land → harbor) for an attacker on `team`, with its aim point
-function nearestSurfaceTarget(team,p,maxR){ const foe=1-team;
+function nearestSurfaceTarget(team,p,maxR,includeSoft=false,includeHarbor=true){ const foe=1-team;
   let best=null,bd=maxR||1e9;
-  const sh=nearestShipOf(foe,p); if(sh){ const d=sh.pos.distanceTo(p); if(d<bd){bd=d;best={pos:shipAim(sh),d};} }
-  const u=nearestLandOf(foe,p);  if(u){ const d=u.pos.distanceTo(p);  if(d<bd){bd=d;best={pos:u.pos.clone().setY(2.5),d};} }
-  const h=harborOf(foe); if(h&&h.hp>0){ const d=h.pos.distanceTo(p); if(d<bd){bd=d;best={pos:h.pos.clone().setY(7),d};} }
+  const sh=nearestShipOf(foe,p); if(sh){ const d=sh.pos.distanceTo(p); if(d<bd){bd=d;best={kind:'ship',target:sh,pos:shipAim(sh),vel:sh.vel||null,d};} }
+  const u=nearestLandOf(foe,p);  if(u){ const d=u.pos.distanceTo(p);  if(d<bd){bd=d;best={kind:'land',target:u,pos:u.pos.clone().setY(u.kind==='soldier'?1.4:2.5),vel:null,d};} }
+  if(foe===0){
+    const tk=nearestPlayerTank(p);if(tk){const wp=tankWP(tk),d=wp.distanceTo(p);if(d<bd){bd=d;best={kind:'tank',target:tk,pos:wp.clone().setY(wp.y+1),vel:null,d};}}
+    const c=activePlayerCombatant();if(c&&c.kind!=='plane'&&(c.hard||includeSoft)){
+      const d=c.pos.distanceTo(p),score=d+(c.hard?0:140);if(score<bd){bd=score;best={kind:c.kind,target:c,pos:c.pos.clone(),vel:c.vel,d};}}
+  }
+  const h=harborOf(foe); if(includeHarbor&&h&&h.hp>0){ const d=h.pos.distanceTo(p); if(d<bd){bd=d;best={kind:'harbor',target:h,pos:h.pos.clone().setY(7),vel:null,d};} }
   return best; }
 // ballistic firing solution: velocity that lands a shell of `speed` on `to` from `from` (low arc); null if out of range
 function arcVelocity(from,to,speed){
@@ -3753,18 +3776,18 @@ function aiShipFire(s){
       const dir=aim.setY(0.6).sub(from.clone().setY(0.6)).normalize();
       spawnShell(w, from.clone(), dir, team, s); return;
     }
-    if(w.role==='both'){ // dual-purpose flat gun — direct fire at the nearest ship OR aircraft (led)
-      const sh=nearestShipOf(foe,s.pos), pl=nearestPlaneOf(foe,s.pos);
-      const ds=sh?sh.pos.distanceTo(s.pos):1e9, dp=pl?pl.pos.distanceTo(s.pos):1e9;
+    if(w.role==='both'){ // dual-purpose flat gun — aircraft or any exposed surface combatant
+      const surf=nearestSurfaceTarget(team,s.pos,260*rf,true),pl=nearestPlaneOf(foe,s.pos);
+      const ds=surf?surf.d:1e9,dp=pl?pl.pos.distanceTo(s.pos):1e9;
       if(Math.min(ds,dp)>260*rf) return;
-      const aim = dp<ds ? leadAir(from,pl) : intercept(from, sh.pos.clone().setY(sh.def.deckY+1), sh.vel, w.spd);
+      const aim=dp<ds?leadAir(from,pl):intercept(from,surf.pos,surf.vel,w.spd);
       spawnShell(w, from.clone(), aim.sub(from).normalize(), team, s); return;
     }
     // surface (true cannons) — ballistic solution onto the led position of a moving ship, else bombard shore
     const sh=nearestShipOf(foe, s.pos);
     let aimPt;
     if(sh && sh.pos.distanceTo(s.pos)<360*rf){ aimPt=intercept(from, sh.pos.clone().setY((sh.def?sh.def.deckY:2)+1), sh.vel, w.spd*0.82); }
-    else { const surf=nearestSurfaceTarget(team, s.pos, 360*rf); if(!surf) return; aimPt=surf.pos; }
+    else { const surf=nearestSurfaceTarget(team,s.pos,360*rf,true);if(!surf)return;aimPt=intercept(from,surf.pos,surf.vel,w.spd*0.82); }
     const vel=arcVelocity(from, aimPt, w.spd); if(!vel) return;        // out of range → hold fire (don't lob at max)
     vel.x+=(Math.random()-0.5)*3; vel.z+=(Math.random()-0.5)*3;        // slight dispersion
     spawnShell(w, from.clone(), vel.clone().normalize(), team, s, false, vel);
@@ -4500,9 +4523,15 @@ function boom(pos,scale){
   const l=new THREE.PointLight(0xff8030,7,20*scale); l.position.copy(pos); scene.add(l); fx.push({mesh:l,life:0.32,li:24,light:true});
 }
 function explodeAt(pos,team,dmg,rad,owner){
-  const targets = team===0?enemies:[player];
-  targets.forEach(t=>{ if(!t) return; const tp=t===player?player.pos.clone().setY(player.def.deckY):t.pos;
-    const d=tp.distanceTo(pos); const R=rad+(t.def.beam/2); if(d<R && (t===player? player.hp>0 : t.hp>0)) damageTarget(t,dmg*(1-d/R*0.6),owner,pos); });
+  const shipTargets=team===0?enemies:(playerShipExists()?[player]:[]);
+  shipTargets.forEach(t=>{if(!t)return;const tp=t===player?player.pos.clone().setY(player.def.deckY):t.pos;
+    const d=tp.distanceTo(pos),R=rad+t.def.beam/2;if(d<R&&(t===player?player.hp>0:t.hp>0))damageTarget(t,dmg*(1-d/R*.6),owner,pos);});
+  if(team===1){
+    const c=activePlayerCombatant();
+    if(c&&c.kind!=='tank'){const d=c.pos.distanceTo(pos),R=rad+c.radius;if(d<R)hurtActivePlayerCombatant(c,dmg*(1-d/R*.6),pos);}
+    [...playerTanks].forEach(tk=>{if(tk.onDeck||tk.hp<=0)return;const wp=tankWP(tk),d=wp.distanceTo(pos),R=rad+3.4;
+      if(d<R)hurtPlayerTank(tk,dmg*(1-d/R*.6),pos,pos.y>wp.y+3);});
+  }
   boom(pos, 0.5+rad*0.16);
   igniteBlast(pos, rad);                 // the blast sets nearby flammable things ablaze
 }
@@ -4668,7 +4697,9 @@ function strategicBlastFx(pos,rad){
 function blastAll(pos,dmg,rad,massive=false,spareHarbors=false){
   const hurt=(tp,size,apply)=>{ const d=tp.distanceTo(pos), R=rad+size; if(d<R) apply(dmg*(1-d/R*0.6)); };
   if(onFoot&&footHP>0) hurt(footPos.clone(),1.6,x=>damageFoot(x,pos));
-  if(player&&player.hp>0&&!landCampaignMode&&!playerShipLost) hurt(player.pos.clone().setY(player.def.deckY), player.def.beam/2, x=>damageTarget(player,x,null,pos));
+  if(playerShipExists())hurt(player.pos.clone().setY(player.def.deckY),player.def.beam/2,x=>damageTarget(player,x,null,pos));
+  if(massive&&piloting&&piloting.hp>0)hurt(piloting.pos,3.6,x=>hurtPlayerPlane(x));
+  [...playerTanks].forEach(tk=>{if(tk.onDeck||tk.hp<=0)return;const wp=tankWP(tk);hurt(wp,3.4,x=>hurtPlayerTank(tk,x,pos,pos.y>wp.y+3));});
   enemies.forEach(e=>{ if(e.sinkT===0) hurt(e.pos, e.def.beam/2, x=>damageTarget(e,x,null,pos)); });
   allies.forEach(a=>{ if(a.sinkT===0) hurt(a.pos, a.def.beam/2, x=>damageAlly(a,x,pos)); });
   [...landUnits].forEach(u=>{ if(!u.dead) hurt(u.pos, Math.max(3,(u.footprint||4)*.35), x=>{ u.hp-=x;if(u.hp<=0)killLandUnit(u,massive); }); });
@@ -5034,11 +5065,11 @@ function updateShells(dt){
     }
     else {
       if(onFoot&&footHP>0&&s.mesh.position.distanceTo(footPos)<2.2){ damageFoot(s.dmg,s.mesh.position); hitSpark(s.mesh.position.clone()); hit=true; }
-      const shipVulnerable=!landCampaignMode&&!playerShipLost;
+      const shipVulnerable=playerShipExists();
       const pp=player.pos.clone().setY(player.def.deckY); if(!hit&&shipVulnerable&&player.hp>0 && !(player.submerged && !s.water) && s.mesh.position.distanceTo(pp)< player.def.beam/2+3){ onShellHit(s,s.mesh.position.clone(),player); hit=true; }   // dived sub only takes torpedo hits
       if(!hit && piloting && piloting.hp>0 && s.mesh.position.distanceTo(piloting.pos)<3.6){ hurtPlayerPlane(s.dmg); hitSpark(s.mesh.position.clone()); hit=true; }  // you, flying, are a valid target
-      if(!hit && drivingTank && drivingTank.hp>0){ const twp=tankWP(drivingTank); if(s.mesh.position.distanceTo(twp)<3.4){
-        hurtPlayerTank(drivingTank, s.dmg, s.mesh.position.clone().sub(s.vel), s.vel.y<-9); hitSpark(s.mesh.position.clone()); hit=true; } }  // your tank — armor facing from the shell's vector, top hit if plunging
+      if(!hit)for(const tk of playerTanks){if(tk.onDeck||tk.hp<=0)continue;const twp=tankWP(tk);if(s.mesh.position.distanceTo(twp)<3.4){
+        hurtPlayerTank(tk,s.dmg,s.mesh.position.clone().sub(s.vel),s.vel.y<-9);hitSpark(s.mesh.position.clone());hit=true;break;}} // driven or uncrewed field tank
       if(!hit) for(const ap of aiPlanes){ if(ap.team!==0||ap.hp<=0)continue; if(s.mesh.position.distanceTo(ap.pos)<3.2){ ap.hp-=s.dmg; hitSpark(s.mesh.position.clone()); if(ap.hp<=0) killAIPlane(ap); hit=true; break; } }
       if(!hit) for(const a of allies){ if(a.sinkT>0)continue; if(s.mesh.position.distanceTo(a.pos)< a.def.beam/2+2){ damageAlly(a,s.dmg,s.mesh.position.clone()); hitSpark(s.mesh.position.clone()); hit=true; break; } }
       if(!hit && s.mesh.position.y<20) for(const u of landUnits){ if(u.team!==0||u.dead)continue; if(s.mesh.position.distanceTo(u.pos)<Math.max(3.5,(u.footprint||4)*.38)){
@@ -5131,11 +5162,13 @@ function updateAIPlane(p,dt){
     if(p.hp<=0){ killAIPlane(p); return; } }
   else if(p.hp<p.maxhp*0.3 && Math.random()<dt*0.12) igniteEntity(p,'plane');                  // battle damage can spark an engine fire
   const foe=1-p.team, pr=p.prof;
-  // --- acquire a target: fighters dogfight, strike planes hunt surface (ships → harbor) ---
+  // --- acquire a target: fighters dogfight; strike aircraft hunt every exposed surface combatant ---
   let tgtPos=null, tgtAir=false, tgtY=6;
   if(pr.fighter){ const ep=nearestPlaneOf(foe,p.pos); if(ep){ tgtPos=ep.pos.clone(); tgtAir=true; } }
-  if(!tgtPos){ const s=nearestShipOf(foe,p.pos); if(s){ tgtPos=s.pos.clone(); tgtY=(s.def?s.def.deckY:2)+1; }
-    else { const h=harborOf(foe); if(h&&h.hp>0){ tgtPos=h.pos.clone(); tgtY=7; } } }
+  if(!tgtPos){
+    if(pr.torp){const s=nearestShipOf(foe,p.pos);if(s){tgtPos=s.pos.clone();tgtY=(s.def?s.def.deckY:2)+1;}}
+    else {const surf=nearestSurfaceTarget(p.team,p.pos,1e9,true);if(surf){tgtPos=surf.pos.clone();tgtY=surf.pos.y;}}
+  }
   if(!tgtPos){ const h=harborOf(foe); tgtPos=h?h.pos.clone():new THREE.Vector3(0,0,p.team===1?900:-900); }
   const to=tgtPos.clone().sub(p.pos); const dist=Math.hypot(to.x,to.z); const bearing=Math.atan2(to.x,to.z);
   // attack-run altitude depends on the weapon: torpedoes skim, dive bombers dive, missile jets stay high
@@ -5170,6 +5203,8 @@ function updateAIPlane(p,dt){
   // kamikaze: a low plane on top of an enemy ship rams it
   if(p.pos.y<13){ for(const s of shipsOf(foe)){ const sp2=(s===player); if((sp2?player.hp:s.hp)<=0)continue;
       if(Math.hypot(p.pos.x-s.pos.x,p.pos.z-s.pos.z)<(s.def.beam/2)+5){const kd=p.def.kamikazeDamage||90;if(sp2)damageTarget(player,kd,null);else if(s.team===0)damageAlly(s,kd);else damageTarget(s,kd,null);killAIPlane(p);return;} } }
+  if(p.suicide&&p.team===1){const c=activePlayerCombatant();if(c&&p.pos.distanceTo(c.pos)<c.radius+4){
+    hurtActivePlayerCombatant(c,p.def.kamikazeDamage||90,p.pos);killAIPlane(p);return;}}
   // --- weapons: use THIS plane's actual armament ---
   const lined=Math.abs(dh)<0.5;
   if(p.state==='attack'){
@@ -5248,7 +5283,8 @@ function updateNuclearSilo(u,dt){
   if(u.siloMissile)u.siloMissile.visible=u.fireT<=0;
   if(u.fireT>0){u.fireT=Math.max(0,u.fireT-dt);return;}
   if(u.team===0)return; // friendly strategic weapons require a human tactical-map launch
-  const target=nearestShipOf(0,u.pos);if(target)launchNuclearMissile(u,target.pos.clone());
+  const target=nearestSurfaceTarget(u.team,u.pos,14000,true,false); // never auto-target either harbor
+  if(target)launchNuclearMissile(u,target.pos.clone());
 }
 function incomingWarning(pos,team,life){
   if(team!==1)return;
@@ -5261,8 +5297,9 @@ function nearestGroundCombatTarget(team,pos,maxR=220,island=null){
   const groundTheater=!!(window._MAP&&window._MAP.ground);
   landUnits.forEach(u=>{if(u.dead||u.team!==foe)return;if(!groundTheater&&island&&u.island&&u.island!==island)return;
     const d=u.pos.distanceTo(pos);if(d<bd){bd=d;best={kind:'land',unit:u,pos:u.pos.clone().setY(u.kind==='soldier'?1.4:2.3),d};}});
-  if(team===1&&onFoot&&footHP>0){const d=footPos.distanceTo(pos);if(d<bd){bd=d;best={kind:'foot',pos:footPos.clone().setY(1.2),d};}}
-  if(team===1&&drivingTank&&drivingTank.hp>0&&!drivingTank.onDeck){const d=drivingTank.pos.distanceTo(pos);if(d<bd){bd=d;best={kind:'playerTank',pos:drivingTank.pos.clone().setY(2.5),d};}}
+  if(team===1&&onFoot&&footHP>0){const d=footPos.distanceTo(pos);if(d<bd){bd=d;best={kind:footLand?'foot':'swimmer',pos:footPos.clone(),d};}}
+  if(team===1)playerTanks.forEach(tk=>{if(tk.onDeck||tk.hp<=0)return;const wp=tankWP(tk),d=wp.distanceTo(pos);
+    if(d<bd){bd=d;best={kind:'playerTank',unit:tk,pos:wp.clone().setY(wp.y+1),d};}});
   return best;
 }
 function moveLandUnitToward(u,target,dt,stop){
@@ -5300,9 +5337,9 @@ function updateLandUnit(u,dt){
   if(u.nukesilo){updateNuclearSilo(u,dt);return;}
   if(updateSupportBuilding(u,dt))return;
   if(u.supergun||u.fortress||u.rocket){
-    const shp=nearestShipOf(foe,u.pos);if(!shp)return;
-    const dist=shp.pos.distanceTo(u.pos),min=u.supergun?350:0;if(dist<min||dist>u.range||!teamHasSpotter(u.team,shp.pos))return;
-    const target=intercept(u.pos,shp.pos.clone().setY(shp.def.deckY+1),shp.vel,u.supergun?300:170);
+    const surf=nearestSurfaceTarget(u.team,u.pos,u.range,false,false);if(!surf)return;
+    const dist=surf.d,min=u.supergun?350:0;if(dist<min||dist>u.range||!teamHasSpotter(u.team,surf.pos))return;
+    const target=intercept(u.pos,surf.pos,surf.vel,u.supergun?300:170);
     const to=target.clone().sub(u.pos);if(u.turret){const wy=Math.atan2(to.x,to.z);u.turret.rotation.y+=Math.max(-.22*dt,Math.min(.22*dt,((wy-u.turret.rotation.y+Math.PI*3)%(Math.PI*2))-Math.PI));}
     if(u.ammoLeft!=null&&u.ammoLeft<=0)return;
     u.fireT-=dt;if(u.fireT>0)return;u.fireT=u.fireRate*reloadFactor(u)*(0.9+Math.random()*.2);if(u.ammoLeft!=null)u.ammoLeft--;
@@ -5314,8 +5351,8 @@ function updateLandUnit(u,dt){
     return;
   }
   if(u.bunker){
-    const sh=nearestShipOf(foe,u.pos);let target=sh&&sh.pos.distanceTo(u.pos)<u.range?sh.pos.clone().setY(sh.def.deckY):null;
-    if(u.team===1&&drivingTank&&!drivingTank.onDeck&&drivingTank.pos.distanceTo(u.pos)<u.range)target=drivingTank.pos.clone().setY(2);
+    const ground=nearestGroundCombatTarget(u.team,u.pos,u.range,u.island),sh=nearestShipOf(foe,u.pos);
+    let target=ground?ground.pos:(sh&&sh.pos.distanceTo(u.pos)<u.range?sh.pos.clone().setY(sh.def.deckY):null);
     if(!target)return;const to=target.clone().sub(u.pos);if(u.turret)u.turret.rotation.y=Math.atan2(to.x,to.z);
     u.fireT-=dt;if(u.fireT<=0){u.fireT=u.fireRate*reloadFactor(u);const from=u.pos.clone().setY(u.pos.y+7);spawnShell({dmg:u.dmg,spd:150,kind:'gun',col:0xffd070},from,target.sub(from).normalize(),u.team,u);}return;
   }
@@ -5433,13 +5470,13 @@ function updateHarbors(dt){
       if(d.t>=1.2){ d.t=0; }   // finished → reset (ship launched)
     }
     const foe=1-h.team, mine=h.team===0, rng=teamRange(h.team);   // radar tower extends this harbor's reach
-    // big guns — arc a shell onto the nearest enemy ship in range (proper ballistic solution, leads the target)
+    // big guns — arc onto the nearest exposed surface combatant (ship, tank, building, or lone infiltrator)
     h.fireT=(h.fireT||3)-dt;
     if(h.fireT<=0){ h.fireT=2.4+Math.random()*1.8;
-      const sh=nearestShipOf(foe,h.pos);
-      if(sh && sh.pos.distanceTo(h.pos)<360+rng){ const from=h.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*20,12,8));
+      const surf=nearestSurfaceTarget(h.team,h.pos,360+rng,true);
+      if(surf){ const from=h.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*20,12,8));
         const w={dmg:30,spd:100,splash:8,kind:'cannon',col:0xffb060};
-        const to=intercept(from, sh.pos.clone().setY((sh.def?sh.def.deckY:2)+1), sh.vel, w.spd*0.82);
+        const to=intercept(from,surf.pos,surf.vel,w.spd*0.82);
         const vel=arcVelocity(from,to,w.spd); if(vel) spawnShell(w, from, vel.clone().normalize(), h.team, h, false, vel); } }
     // harbor flak — heavy AA against incoming aircraft
     h.aaT=(h.aaT||1)-dt;
