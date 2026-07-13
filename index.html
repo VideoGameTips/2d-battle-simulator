@@ -117,6 +117,11 @@
   #over p{color:#9fb6cc;margin-bottom:22px;}
   #over button{padding:12px 28px;font-size:15px;letter-spacing:2px;background:#1d4d6e;border:1px solid #5fd0ff;
     color:#eaf6ff;border-radius:8px;cursor:pointer;}
+  #fatalError{position:fixed;inset:0;z-index:99;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(4,9,14,.9);}
+  #fatalError .card{width:min(560px,94vw);padding:24px;border:1px solid #c65b54;border-radius:12px;background:#151d27;box-shadow:0 12px 55px #000;color:#dfeaf4;}
+  #fatalError h2{margin-bottom:10px;color:#ff8a7e;letter-spacing:2px;font-size:20px;}#fatalError p{color:#aebfd0;font-size:13px;line-height:1.55;}
+  #fatalError code{display:block;max-height:110px;overflow:auto;margin:13px 0;padding:9px;border-radius:6px;background:#0a1018;color:#ffd0c8;font:11px ui-monospace,monospace;white-space:pre-wrap;}
+  #fatalError button{padding:9px 14px;border:1px solid #5fd0ff;border-radius:7px;background:#19435f;color:#eaf6ff;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -188,6 +193,7 @@
   <p id="overText"></p>
   <button onclick="location.reload()">NEW COMMAND</button>
 </div>
+<div id="fatalError"><div class="card"><h2>⚠ GAME ERROR</h2><p>The battle stopped safely instead of silently freezing. Reload to restart the renderer.</p><code id="fatalDetail">Unknown error</code><button onclick="location.reload()">RELOAD GAME</button></div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <!-- Post-processing (bloom): official three.js r128 example passes, loaded as classic
@@ -208,6 +214,17 @@
 // =====================================================================
 //  IRON TIDE — first-person battleship command (single-file Three.js)
 // =====================================================================
+let fatalReported=false;
+function showFatalError(err){
+  if(fatalReported)return;fatalReported=true;
+  const text=(err&&((err.stack)||err.message)||String(err)||'Unknown runtime failure').slice(0,1400);
+  const panel=document.getElementById('fatalError'),detail=document.getElementById('fatalDetail');
+  if(detail)detail.textContent=text;if(panel)panel.style.display='flex';
+  if(document.pointerLockElement)document.exitPointerLock();
+  console.error('Iron Tide stopped safely:',err);
+}
+window.addEventListener('error',e=>showFatalError(e.error||e.message));
+window.addEventListener('unhandledrejection',e=>showFatalError(e.reason));
 
 // ---------- catalogs ----------
 const SHIPS = {
@@ -227,6 +244,14 @@ const SHIPS = {
                 desc:'One per side. A slow armored flagship with twelve guns already fitted, enormous firepower and no replacement.' },
   carrier:    { name:'Aircraft Carrier', cls:'Flat-top',len:100,beam:19, depth:5.0, deckY:4.6, hp:560, kind:'carrier', mounts:8,
                 desc:'Vast flight deck to roam, island bridge to starboard. Bomb bays.' },
+  frigate:    { name:'Missile Frigate', cls:'Escort',   len:54, beam:8,  depth:3.8, deckY:3.0, hp:250, kind:'surface', mounts:5,
+                desc:'Nimble missile escort — quick and lightly built, made to screen the fleet and swat aircraft out of the sky.' },
+  battlecruiser:{ name:'Battlecruiser', cls:'Fast Capital', len:88, beam:12.5, depth:4.8, deckY:4.0, hp:470, kind:'surface', mounts:9,
+                desc:'Battleship guns on a lean, fast hull — hits like a capital ship, but its armor belt is thin. Outrun what you cannot outgun.' },
+  monitor:    { name:'Coastal Monitor', cls:'Gun Platform', len:58, beam:16, depth:3.0, deckY:2.7, hp:620, kind:'surface', mounts:5,
+                desc:'Squat, shallow-draft and barely mobile — but armored like a bunker with a handful of oversized guns. A floating fortress for shore bombardment.' },
+  akagi:      { name:'Akagi', cls:'Fleet Carrier', len:114, beam:20, depth:5.2, deckY:4.9, hp:700, kind:'carrier', mounts:9,
+                desc:'The legendary flagship of the Kido Butai carrier fleet that opened the strike on Pearl Harbor. A vast triple-tier flight deck and an enormous air wing — devastating from range, but thinly armored, so keep her well screened.' },
 };
 const FLEET_TENDER={name:'Fleet Tender',cls:'Support',len:64,beam:11,depth:4.4,deckY:3.5,hp:360,kind:'surface',mounts:4,support:true};
 Object.values(SHIPS).forEach(s=>s.mounts=Math.max(1,Math.round(s.mounts*1.5))); // 75% of the previous doubled capacity
@@ -424,6 +449,7 @@ function mkCyl(rt,rb,h,m,seg=14){ const x=new THREE.Mesh(new THREE.CylinderGeome
 let water, waterGeo;
 function initThree(){
   renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:true});
+  renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();showFatalError('WebGL context was lost. This can happen when the browser runs out of graphics memory.');});
   renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(1.5,devicePixelRatio));
   renderer.shadowMap.enabled=false;   // shadows were rendering ~20k meshes twice — huge cost
   renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.0;   // neutral exposure; ship paint is tuned locally below
@@ -726,6 +752,38 @@ function updateWeather(dt){
   const bright=day*W.dark;
   if(sun){ sun.intensity=0.28+0.95*bright; sun.color.setRGB(1, 0.92-dusk*0.25, 0.85-dusk*0.45); }   // original levels — ACES alone needs no boost
   if(hemi) hemi.intensity=0.32+0.6*Math.max(bright,day*0.4);   // keep night moody but still playable
+}
+// ===== LIGHTNING — storms occasionally hurl a bolt; tall metal ships are the tallest thing on the sea =====
+let lightningT=10;
+function lightningBolt(pos){
+  const top=pos.clone().setY(pos.y+340), pts=[top], seg=11;
+  for(let i=1;i<seg;i++){ const f=i/seg, p=top.clone().lerp(pos,f);
+    p.x+=(Math.random()-0.5)*40*(1-f); p.z+=(Math.random()-0.5)*40*(1-f); pts.push(p); }
+  pts.push(pos.clone());
+  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({color:0xe6f0ff,transparent:true,opacity:1,blending:THREE.AdditiveBlending,depthWrite:false}));
+  scene.add(line); fx.push({mesh:line,life:0.24,max:0.24,op:1,fade:true});
+  const l=new THREE.PointLight(0xdbeaff,14,900); l.position.copy(pos).setY(pos.y+40); scene.add(l); fx.push({mesh:l,life:0.3,li:70,light:true});   // scene-wide flash
+  const f=_spr(fireTex(),true); f.material.color.setHex(0xdbeaff); f.scale.setScalar(18); f.position.copy(pos); scene.add(f);
+  fx.push({mesh:f,life:0.2,max:0.2,op:1,fade:true,grow:true,growRate:6});
+}
+function updateLightning(dt){
+  if(typeof weather!=='object' || weather.type!=='storm'){ lightningT=8+Math.random()*8; return; }
+  lightningT-=dt; if(lightningT>0) return;
+  lightningT=7+Math.random()*12;                        // a strike every ~7–19s in a storm
+  const ships=[...allies,...enemies].filter(s=>s.sinkT===0&&!s.proxy);
+  if(player&&player.hp>0&&!playerShipLost&&!landCampaignMode) ships.push(player);
+  const target=(ships.length && Math.random()<0.6) ? ships[Math.floor(Math.random()*ships.length)] : null;
+  const anchor=(player&&player.pos)?player.pos:new THREE.Vector3();
+  const gp = target ? (target===player?player.pos:target.pos).clone()
+                    : anchor.clone().add(new THREE.Vector3((Math.random()-0.5)*700,0,(Math.random()-0.5)*700));
+  gp.y = target ? (target.def?target.def.deckY:3)+(target.def&&target.def.len>60?15:9) : 1;
+  lightningBolt(gp);
+  if(typeof sfxBoom==='function') setTimeout(()=>{ if(phase==='play') sfxBoom(gp,2.2); }, 220+Math.random()*380);   // thunder lags the flash
+  if(target){ const dmg=42+Math.random()*44;
+    if(target===player){ damageTarget(player,dmg,null,gp); flashPrompt('⚡ LIGHTNING STRIKE — hull jolted!'); }
+    else if(target.team===0) damageAlly(target,dmg,gp); else damageTarget(target,dmg,null,gp);
+    if(Math.random()<0.4) igniteEntity(target,'ship'); }   // electrical fire
 }
 
 // =====================================================================
@@ -1272,6 +1330,16 @@ function clampToIsland(pos,o,f=0.9){
   const q=islandLocal(pos,o),rx=o.rx||o.r,rz=o.rz||o.r,n=Math.hypot(q.x/rx,q.z/rz);
   if(n<=f)return pos;
   const p=islandWorld(o,q.x*f/n,q.z*f/n); pos.x=p.x; pos.z=p.z; return pos;
+}
+function islandSurfaceAt(pos,margin=0){
+  let best=null,bestN=Infinity;
+  islands.forEach(isl=>{const n=islandNorm(pos,isl,margin);if(n<1&&n<bestN){best=isl;bestN=n;}});
+  return best?{island:best,height:(best.top||2.1)}:null;
+}
+function planeTerrainCollision(P){
+  const ground=islandSurfaceAt(P.pos,1.5);
+  if(ground&&P.pos.y<ground.height+2.8){crashPlane('Flew into '+(ground.island.name||'an island')+' — aircraft destroyed!');return true;}
+  return false;
 }
 function buildHarbor(team,pos){
   const g=new THREE.Group(); g.position.copy(pos);
@@ -2495,7 +2563,9 @@ function updateWarPacing(dt){
   if(_eventT<=0){ _eventT=55+Math.random()*45; _eventCount++; fireDynamicEvent(ground); }
   // rotating side objectives with cash rewards
   if(sideOb){ sideOb.t-=dt;
-    if(sideObProgress()>=sideOb.goal){ money+=sideOb.pay; updateHUD(); refreshShop(); sfxClick();
+    if(sideOb.kind==='escort' && sideOb.convoy && (sideOb.convoy.dead||sideOb.convoy.sinkT>0)){   // convoy sunk → instant fail
+      flashPrompt('✖ CONVOY LOST — escort failed.'); if(typeof sfxAlarm==='function')sfxAlarm(); sideOb=null; sideObT=45+Math.random()*30; }
+    else if(sideObProgress()>=sideOb.goal){ money+=sideOb.pay; updateHUD(); refreshShop(); sfxClick();
       flashPrompt('✅ OBJECTIVE COMPLETE — +$'+sideOb.pay); sideOb=null; sideObT=35+Math.random()*25; }
     else if(sideOb.t<=0){ flashPrompt('✖ Objective failed.'); sideOb=null; sideObT=40+Math.random()*30; }
   } else { sideObT-=dt; if(sideObT<=0) newSideObjective(); }
@@ -2507,10 +2577,18 @@ function updateWarPacing(dt){
   if(el) el.textContent = sideOb ? ('★ '+sideOb.label+'  '+Math.min(sideOb.goal,sideObProgress())+'/'+sideOb.goal+' · '+Math.ceil(sideOb.t)+'s · $'+sideOb.pay) : '';
 }
 function sideObProgress(){ if(!sideOb) return 0;
+  if(sideOb.kind==='escort'){ const a=sideOb.convoy, d=a&&a.convoyTarget;
+    if(!a||a.dead||a.sinkT>0||!d) return 0;
+    return a.pos.distanceTo(d.pos) < ((d.r||d.rx||80)+70) ? 1 : 0; }   // convoy reached its destination
   return sideOb.kind==='sink'?sunk-sideOb.base : sideOb.kind==='planes'?sessPlanes-sideOb.base : controlledIslandCount(0)-sideOb.base; }
 function newSideObjective(){
+  const ground=window._MAP&&window._MAP.ground;
   const r=Math.random();
-  if(r<0.4)       sideOb={kind:'sink',   goal:3, t:150, pay:700, base:sunk,       label:'BONUS: sink 3 warships'};
+  if(!ground && r<0.24){ const a=spawnCargoConvoy();                    // ESCORT — protect a slow freighter to its destination
+    sideOb={kind:'escort', goal:1, t:230, pay:1500, convoy:a,
+      label:'ESCORT convoy to '+((a.convoyTarget&&a.convoyTarget.name)||'the front')};
+    if(typeof comms==='function') comms(a.callsign,'Cargo run underway — cover me, Admiral!','#8fd0a0'); }
+  else if(r<0.5)  sideOb={kind:'sink',   goal:3, t:150, pay:700, base:sunk,       label:'BONUS: sink 3 warships'};
   else if(r<0.75) sideOb={kind:'planes', goal:3, t:120, pay:500, base:sessPlanes, label:'BONUS: down 3 aircraft'};
   else            sideOb={kind:'capture',goal:1, t:240, pay:900, base:controlledIslandCount(0), label:'BONUS: capture an island'};
   flashPrompt('★ NEW OBJECTIVE — '+sideOb.label+' ($'+sideOb.pay+')'); sfxClick();
@@ -3429,7 +3507,10 @@ function updateTank(dt){
     if(tk.turret) tk.turret.rotation.y = camYaw.v - player.heading - tk.heading;
     wp=g.getWorldPosition(new THREE.Vector3());
   } else {
+    const old=tk.pos.clone();
     tk.pos.x+=Math.sin(tk.heading)*mv*sp*dt; tk.pos.z+=Math.cos(tk.heading)*mv*sp*dt;
+    if(groundVehicleBlocked(tk.pos,tk)){tk.pos.copy(old);if((tk.blockMsgT||0)<=0){flashPrompt('⛔ Tank blocked by structure');tk.blockMsgT=.6;}}
+    tk.blockMsgT=Math.max(0,(tk.blockMsgT||0)-dt);
     const surf=footSurfaceAt(tk.pos,0); tk.island=surf?landIdentity(surf):null; tk.pos.y=surf?2.1:0.75;
     tk.group.position.copy(tk.pos); tk.group.rotation.y=tk.heading;
     if(tk.turret) tk.turret.rotation.y = camYaw.v - tk.heading;
@@ -3538,6 +3619,16 @@ function chooseNPCShipDef(team){
   const types=['scout','submarine','destroyer','cruiser','battleship'];
   return {...SHIPS[types[Math.floor(Math.random()*types.length)]]};
 }
+// combat doctrine — how a captain fights: aggressive rush, patient sniper, kiting skirmisher, or breaks under fire
+function pickDoctrine(def){
+  if(def.support) return 'support';
+  if(def.boss) return 'brawler';
+  const r=Math.random();
+  if(def.kind==='scout') return r<0.6?'skirmisher':'aggressive';                    // fast pickets harry & dart
+  if(def.len>70) return r<0.5?'brawler':r<0.82?'sniper':'aggressive';               // capital ships stand & slug or snipe
+  return r<0.28?'aggressive':r<0.52?'brawler':r<0.76?'skirmisher':r<0.9?'sniper':'coward';   // cruisers/destroyers: full mix
+}
+const DOCTRINE_STAND={aggressive:0.5, brawler:1, skirmisher:1.3, sniper:1.9, coward:1.2, support:1};   // standoff-range multiplier
 function spawnEnemy(){
   const def=chooseNPCShipDef(1),t=def.support?'support':Object.keys(SHIPS).find(k=>SHIPS[k].name===def.name);
   const build=buildAIShipModel(def,1);
@@ -3548,6 +3639,7 @@ function spawnEnemy(){
     heading:0, fireT:1+Math.random()*3, sinkT:0, turnT:0,
     standoff: (t==='scout'?110:t==='battleship'?190:150) + (Math.random()-0.5)*40,  // preferred engagement range
     orbitDir: Math.random()<0.5?1:-1, loadout:[], upgT:7+Math.random()*7,           // buys varied weapons over time
+    doctrine: pickDoctrine(def),                                                     // how this captain fights
     planeT:12+Math.random()*16 };                                                    // and launches aircraft over time
   def.support?e.loadout.push(AI_WEAPS[3]):growLoadout(e);
   enemies.push(e);
@@ -4369,7 +4461,7 @@ function recoverPlane(){ // safe landing on the ship
   exit.x+=side*4.5; exit.z+=3.5;
   exit.x=Math.max(-player.build.halfBeam*0.78,Math.min(player.build.halfBeam*0.78,exit.x));
   exit.z=Math.max(-player.build.halfLen*0.78,Math.min(player.build.halfLen*0.78,exit.z));
-  walkPos.set(exit.x,deckEyeY(),exit.z);
+  { const sp=safeDeckPos(exit.x,exit.z); walkPos.set(sp.x,deckEyeY(),sp.z); }   // step out onto clear deck, not inside a turret
   ['KeyW','KeyA','KeyS','KeyD','Space'].forEach(k=>keys[k]=0);
   mouseDownFire=false; driving=false; manning=null; drivingTank=null; onFoot=false;
   if(cockpitHiddenPlane){ cockpitHiddenPlane.visible=true; cockpitHiddenPlane=null; }
@@ -4530,6 +4622,7 @@ function updatePilot(dt){
     pa.group.quaternion.setFromEuler(new THREE.Euler(lean, yaw, P.roll, 'YXZ'));
     spinProp(pa,dt); planeSmoke(P,dt);
     if(playerKamikaze(P)) return;
+    if(planeTerrainCollision(P))return;
     if(P.pos.y<1.5){ crashPlane('Crashed into the sea — aircraft destroyed!'); return; }
     if(Math.hypot(P.pos.x,P.pos.z)>6200){ P.pos.x*=0.99; P.pos.z*=0.99; }
     const hdir=new THREE.Vector3(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));
@@ -4573,6 +4666,7 @@ function updatePilot(dt){
   setAircraftControlSurfaces(pa.group,P.roll,pitch);
   spinProp(pa,dt); planeSmoke(P,dt);
   if(playerKamikaze(P)) return;
+  if(planeTerrainCollision(P))return;
   if(P.pos.y<2){ crashPlane('Flew into the sea — aircraft destroyed!'); return; }
   if(Math.hypot(P.pos.x,P.pos.z)>6200){ P.pos.x*=0.99; P.pos.z*=0.99; }
   // weapons (a destroyed weapons system can't fire)
@@ -4917,9 +5011,24 @@ function fireFx(s,dt){   // ship blaze — scales with hull size and fire intens
   const p=base.clone().setY((s.def.deckY||3)+0.8).add(new THREE.Vector3((Math.random()-0.5)*s.def.beam*0.8,0,(Math.random()-0.5)*s.def.len*0.6));
   burnFx(p,scale,dt,c.fire);
 }
+// CALLED SHOTS — where you hit matters: a hit near a section can knock out that section's
+// system directly (stern→engines/steering, midships→a turret or magazine, bow/waterline→flooding).
+let _csMsgT=0;
+function calledShot(s,dmg,hitPos,friendly){
+  if(!s||!s.def||!hitPos) return;
+  if(Math.random() > Math.min(0.34, dmg/170)*(friendly?1.25:1)) return;   // heavier shells cripple more; aimed player fire a touch more
+  const c=critOf(s), key=compartmentKeyAt(s,hitPos), low=hitPos.y < (s.def.deckY||3)*0.55;
+  let msg;
+  if(low){ c.flood=Math.min(3,c.flood+1); msg='💧 waterline hit — flooding'; }
+  else if(key==='stern'){ c.engine=Math.min(2,c.engine+1); msg='⚙ stern hit — engines crippled'; }
+  else if(key==='mid'){ if(Math.random()<0.5){ c.guns=Math.min(2,c.guns+1); koTurret(s); msg='🔫 turret knocked out'; } else { c.fire=Math.min(4,c.fire+1); msg='🔥 magazine fire'; } }
+  else { c.flood=Math.min(3,c.flood+1); msg='💥 bow holed — taking water'; }
+  if(s===player) critMsg(s,'⚠ '+msg);
+  else if(friendly && t2-_csMsgT>1.4){ _csMsgT=t2; flashPrompt('🎯 Called shot — '+msg); }
+}
 function damageTarget(t,dmg,owner,hitPos){
-  if(t===player){ player.hp-=dmg; damageCompartment(player,dmg,hitPos); applyCrit(player,dmg); if(player.hp<=0){ player.hp=0; playerSunk(); } updateHUD(); return; }
-  t.hp-=dmg; damageCompartment(t,dmg,hitPos); applyCrit(t,dmg); if(t.hp<=0 && t.sinkT===0){ t.hp=0; t.sinkT=0.001; spawnSalvage(t.pos.clone());
+  if(t===player){ player.hp-=dmg; damageCompartment(player,dmg,hitPos); applyCrit(player,dmg); calledShot(player,dmg,hitPos,false); if(player.hp<=0){ player.hp=0; playerSunk(); } updateHUD(); return; }
+  t.hp-=dmg; damageCompartment(t,dmg,hitPos); applyCrit(t,dmg); calledShot(t,dmg,hitPos,(owner===null||!owner||owner.team!==1)); if(t.hp<=0 && t.sinkT===0){ t.hp=0; t.sinkT=0.001; spawnSalvage(t.pos.clone());
     if(owner===null||!owner||owner.team!==1)showHit(t.def.name||'ENEMY SHIP',true);
     const bounty=t.def.boss?30000:t.def.hp>400?700:t.def.hp>250?500:350;
     sunk++;warRecord('sunk');money+=bounty;if(t.def.boss){warRecord('bosses');flashPrompt('⚓ ENEMY LEVIATHAN DESTROYED — $30,000 BOUNTY');}
@@ -4956,6 +5065,7 @@ function blastAll(pos,dmg,rad,massive=false,spareHarbors=false){
 function update(dt,t){
   animateWater(t);
   updateWeather(dt);
+  updateLightning(dt);
   updateGraphics(dt,t);
   // --- controls ---
   if(driving){ updateDrive(dt); }
@@ -5149,10 +5259,27 @@ function footWalkBlocked(x,z){
     return Math.hypot(x-u.pos.x,z-u.pos.z)<radius;
   });
 }
+function groundVehicleBlocked(pos,tk){
+  const surf=footSurfaceAt(pos,0), island=surf?landIdentity(surf):null;
+  if(!island)return false; // water is handled by the tank flooding system
+  return landUnits.some(u=>{if(u.dead||u.kind==='soldier'||u===tk)return false;
+    if(u.island&&u.island!==island)return false;
+    return Math.hypot(pos.x-u.pos.x,pos.z-u.pos.z)<3+Math.max(2.2,(u.footprint||8)*.46);});
+}
 function deckWalkBlocked(x,z){
   const blocks=player&&player.build&&player.build.group.userData.walkBlocks||[];
   return blocks.some(b=>b.r!=null?Math.hypot(x-b.x,z-b.z)<b.r+.48:
     Math.abs(x-b.x)<b.hx+.48&&Math.abs(z-b.z)<b.hz+.48);
+}
+// nearest clear deck spot to (x,z) — used so landing/re-boarding never wedges you inside a turret or the island
+function safeDeckPos(x,z){
+  if(!player||!player.build||!deckWalkBlocked(x,z)) return {x,z};
+  const hB=player.build.halfBeam*0.86, hL=player.build.halfLen*0.86;
+  for(let r=1.2;r<=Math.max(hB,hL)+2;r+=1.2){
+    for(let a=0;a<20;a++){ const ang=a/20*6.2832, nx=x+Math.cos(ang)*r, nz=z+Math.sin(ang)*r;
+      if(Math.abs(nx)<=hB && Math.abs(nz)<=hL && !deckWalkBlocked(nx,nz)) return {x:nx,z:nz}; }
+  }
+  return {x:0, z:hL*0.6};   // last resort: aft centerline (almost always open)
 }
 function updateFoot(dt){
   let mf=0,ms=0; if(keys['KeyW'])mf+=1; if(keys['KeyS'])mf-=1; if(keys['KeyA'])ms-=1; if(keys['KeyD'])ms+=1;
@@ -5187,6 +5314,7 @@ function updateFoot(dt){
   }
 }
 function updateWalk(dt){
+  if(deckWalkBlocked(walkPos.x,walkPos.z)){ const sp=safeDeckPos(walkPos.x,walkPos.z); walkPos.x=sp.x; walkPos.z=sp.z; }   // never stay wedged inside a structure
   let mf=0,ms=0;
   if(keys['KeyW'])mf+=1; if(keys['KeyS'])mf-=1; if(keys['KeyA'])ms-=1; if(keys['KeyD'])ms+=1;
   // look dir is world; rotate it into ship-local frame so you walk relative to view as the ship turns
@@ -5259,21 +5387,29 @@ function updateEnemy(e,dt){
   const blue=patient?patient.pos:(e.def.support?(enemyHarbor?enemyHarbor.pos:new THREE.Vector3()):nearestBlue(e.pos));
   const toP=blue.clone().sub(e.pos); const dP=Math.hypot(toP.x,toP.z);
   const bearing=Math.atan2(toP.x,toP.z);
-  const stand=patient?80:(e.standoff||150);
-  let desired;
-  if(dP>stand+45) desired=bearing;                       // too far → close in
+  const doc=e.doctrine||'brawler';
+  const stand=patient?80:(e.standoff||150)*(DOCTRINE_STAND[doc]||1);   // doctrine sets preferred range: aggressive closes, snipers hang back
+  let desired, fleeing=false;
+  // captains who break under fire turn tail and run from the fight
+  if(!patient && (doc==='coward'&&e.hp<e.maxhp*0.35 || doc==='skirmisher'&&e.hp<e.maxhp*0.16)){
+    desired=bearing+Math.PI; fleeing=true;                 // flat-out away from the nearest threat
+    if(!e._fledMsg){ e._fledMsg=1; if(doc==='coward'&&typeof comms==='function'&&enemyDetected(e)) comms('DOMINION','Taking heavy fire — falling back!','#ff9a6a'); }
+  }
+  else if(dP>stand+45) desired=bearing;                  // too far → close in
   else if(dP<stand-45) desired=bearing+Math.PI;          // too close → back off (no ramming)
   else desired=bearing + Math.PI/2*(e.orbitDir||1);      // in the pocket → orbit for a broadside
-  // occasional jink so they aren't perfectly predictable
-  e.turnT-=dt; if(e.turnT<=0){ e.jink=(Math.random()-0.5)*0.5; e.turnT=2.5+Math.random()*3; }
+  // occasional jink so they aren't perfectly predictable (skirmishers weave harder)
+  const jinkGap=doc==='skirmisher'?1.4:2.5;
+  e.turnT-=dt; if(e.turnT<=0){ e.jink=(Math.random()-0.5)*(doc==='skirmisher'?0.8:0.5); e.turnT=jinkGap+Math.random()*3; }
   desired+=e.jink||0;
   desired=steerClearOfShips(e,e.pos,e.def,desired);   // don't sail into other hulls
-  // soft world bound
-  if(Math.hypot(e.pos.x,e.pos.z)>380){ desired=Math.atan2(-e.pos.x,-e.pos.z); }
+  // soft world bound (fleeing captains are allowed to break off and run past it)
+  if(!fleeing && Math.hypot(e.pos.x,e.pos.z)>380){ desired=Math.atan2(-e.pos.x,-e.pos.z); }
   let dh=desired-e.heading; while(dh>Math.PI)dh-=6.283; while(dh<-Math.PI)dh+=6.283;
   const turnRate=e.def.boss ? 0.24 : e.def.len>70?0.45:0.8;
   e.heading+=Math.max(-turnRate*dt,Math.min(turnRate*dt,dh));
-  const sp=(e.def.boss?6.5:e.def.kind==='scout'?15:e.def.len>70?9:13)*engineFactor(e);
+  const docSp=fleeing?1.25:doc==='aggressive'?1.2:doc==='sniper'?0.88:doc==='skirmisher'?1.12:1;
+  const sp=(e.def.boss?6.5:e.def.kind==='scout'?15:e.def.len>70?9:13)*engineFactor(e)*docSp;
   e.pos.x+=Math.sin(e.heading)*sp*dt; e.pos.z+=Math.cos(e.heading)*sp*dt;
   e.vel=new THREE.Vector3(Math.sin(e.heading)*sp,0,Math.cos(e.heading)*sp);
   keepOffIslands(e.pos, e.def.beam/2+4);
@@ -5309,6 +5445,16 @@ function updateShells(dt){
     if(s.maxDist && s.dist>s.maxDist){ boom(s.mesh.position.clone(),0.5); removeShellAt(i); continue; } // out of range — self-destruct
     if(s.mesh.geometry.type==='ConeGeometry'||s.mesh.geometry.type==='CylinderGeometry') s.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), s.vel.clone().normalize());
     if(s.water) s.mesh.position.y=0.6;
+    // Islands are solid: shells cannot ghost through beachheads and emerge on
+    // the other side. Torpedoes remain water-only and pass alongside shore.
+    const terrain=!s.water&&islandSurfaceAt(s.mesh.position,.15);
+    if(terrain&&s.mesh.position.y<=terrain.height+.45){
+      splashAt(s.mesh.position.clone().setY(terrain.height+.2),s.strategic?7:1.4);
+      if(s.strategic)blastAll(s.mesh.position.clone().setY(terrain.height+1),s.dmg,s.splash,true,s.spareHarbors);
+      else if(s.splash)explodeAt(s.mesh.position.clone().setY(terrain.height+1),s.team,s.dmg,s.splash,s.owner);
+      else boom(s.mesh.position.clone().setY(terrain.height+.4),.6);
+      removeShellAt(i);continue;
+    }
     if(s.trail){ const v=s.vel.clone().normalize(); s.trail.position.copy(s.mesh.position).addScaledVector(v,-s.trailLen/2);
       s.trail.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), v); s.trail.scale.set(1,s.trailLen,1);
       s.trail.material.opacity=(s.heavy?0.72:0.55)+Math.random()*0.22;              // combustion flicker
