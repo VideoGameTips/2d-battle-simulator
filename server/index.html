@@ -190,6 +190,20 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- Post-processing (bloom): official three.js r128 example passes, loaded as classic
+     scripts (attach to the global THREE namespace, same pattern as the core build above).
+     A hand-rolled ambient-occlusion pass is defined in the main script instead of using
+     THREE.SSAOPass — that stock pass renders the ENTIRE scene twice more per frame (a full
+     lit "beauty" pass + a normal-material pass) on top of the main render, which is the
+     exact cost this file already avoids for shadow maps ("rendering ~20k meshes twice").
+     Our AO pass instead reuses the depth buffer from the single main RenderPass (zero
+     extra scene traversals) and reconstructs normals from screen-space depth derivatives. -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script>
 // =====================================================================
 //  IRON TIDE — first-person battleship command (single-file Three.js)
@@ -430,8 +444,96 @@ function initThree(){
     normalMap:wn, normalScale:new THREE.Vector2(0.45,0.45)}));
   water.receiveShadow=true; scene.add(water);
   initGraphics();   // sky pack: sun disc, stars, clouds, wake pool
-  addEventListener('resize',()=>{ renderer.setSize(innerWidth,innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); });
+  initPostFX();     // bloom + contact-shadow AO (falls back to a plain render if it fails to init)
+  addEventListener('resize',()=>{ renderer.setSize(innerWidth,innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); resizePostFX(); });
 }
+
+// =====================================================================
+//  POST-PROCESSING — subtle bloom (fire/muzzle/sun/tracers only) + a cheap
+//  single-pass ambient-occlusion for contact shadows (turret-on-deck, tank-
+//  on-hull, crates on floors). Press I to cycle quality if it's ever too slow.
+// =====================================================================
+let composer=null, aoPass=null, bloomPass=null, gfxQuality=2;   // 2=AO+Bloom, 1=Bloom only, 0=off
+const AOShader = {
+  uniforms:{ tDiffuse:{value:null}, tDepth:{value:null}, cameraNear:{value:0.1}, cameraFar:{value:20000},
+    cameraProjectionMatrix:{value:new THREE.Matrix4()}, cameraProjectionMatrixInverse:{value:new THREE.Matrix4()},
+    resolution:{value:new THREE.Vector2()}, aoRadius:{value:1.7}, aoStrength:{value:0.4} },
+  vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position,1.0); }`,
+  fragmentShader:`
+    uniform sampler2D tDiffuse, tDepth; uniform float cameraNear, cameraFar, aoRadius, aoStrength;
+    uniform mat4 cameraProjectionMatrix, cameraProjectionMatrixInverse; uniform vec2 resolution;
+    varying vec2 vUv;
+    float readDepth(vec2 uv){ return texture2D(tDepth, uv).x; }
+    vec3 viewPosAt(vec2 uv, float depth){
+      vec4 ndc=vec4(uv*2.0-1.0, depth*2.0-1.0, 1.0);
+      vec4 vp=cameraProjectionMatrixInverse*ndc; return vp.xyz/vp.w;
+    }
+    vec2 hash2(vec2 p){ p=vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))); return fract(sin(p)*43758.5453123); }
+    void main(){
+      float depth=readDepth(vUv);
+      vec4 base=texture2D(tDiffuse, vUv);
+      if(depth>=1.0){ gl_FragColor=base; return; }   // sky/background — nothing to occlude
+      vec3 viewPos=viewPosAt(vUv, depth);
+      vec3 dx=dFdx(viewPos), dy=dFdy(viewPos);
+      vec3 normal=normalize(cross(dx,dy));
+      if(dot(normal, viewPos)>0.0) normal=-normal;
+      vec2 rn=hash2(vUv*resolution); float ang=rn.x*6.2831853;
+      vec3 rvec=normalize(vec3(cos(ang),sin(ang),0.0));
+      vec3 tangent=normalize(rvec-normal*dot(rvec,normal));
+      vec3 bitangent=cross(normal,tangent);
+      mat3 tbn=mat3(tangent,bitangent,normal);
+      const int N=9; vec3 kernel[9];
+      kernel[0]=vec3(0.35,0.11,0.35); kernel[1]=vec3(-0.32,0.28,0.45); kernel[2]=vec3(0.1,-0.38,0.4);
+      kernel[3]=vec3(-0.15,-0.3,0.65); kernel[4]=vec3(0.5,0.35,0.6); kernel[5]=vec3(-0.5,0.2,0.75);
+      kernel[6]=vec3(0.2,0.55,0.85); kernel[7]=vec3(-0.25,-0.55,0.9); kernel[8]=vec3(0.05,0.02,1.0);
+      float occlusion=0.0;
+      for(int i=0;i<N;i++){
+        vec3 sampleDir=tbn*kernel[i];
+        vec3 samplePos=viewPos+sampleDir*aoRadius;
+        vec4 off=cameraProjectionMatrix*vec4(samplePos,1.0); off.xyz/=off.w;
+        vec2 sUv=off.xy*0.5+0.5;
+        if(sUv.x<0.0||sUv.x>1.0||sUv.y<0.0||sUv.y>1.0) continue;
+        float sceneDepth=readDepth(sUv);
+        vec3 sceneViewPos=viewPosAt(sUv, sceneDepth);
+        float rangeCheck=smoothstep(0.0,1.0, aoRadius/max(0.0001, abs(viewPos.z-sceneViewPos.z)));
+        occlusion += (sceneViewPos.z >= samplePos.z+0.025 ? 1.0 : 0.0) * rangeCheck;
+      }
+      float ao=1.0-(occlusion/float(N))*aoStrength;
+      gl_FragColor=vec4(base.rgb*ao, base.a);
+    }`
+};
+function initPostFX(){
+  try{
+    if(typeof THREE.EffectComposer==='undefined'||typeof THREE.UnrealBloomPass==='undefined'){
+      console.warn('Post-processing libs not loaded — rendering without bloom/AO.'); composer=null; return; }
+    const pr=renderer.getPixelRatio(), w=Math.round(innerWidth*pr), h=Math.round(innerHeight*pr);
+    const depthTexture=new THREE.DepthTexture(); depthTexture.type=THREE.UnsignedIntType;   // 24/32-bit — this scene's near/far span (0.1..20000) needs the precision
+    const rt=new THREE.WebGLRenderTarget(w,h,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,format:THREE.RGBAFormat,depthTexture,depthBuffer:true});
+    composer=new THREE.EffectComposer(renderer, rt);
+    composer.addPass(new THREE.RenderPass(scene,camera));
+    aoPass=new THREE.ShaderPass(AOShader);
+    aoPass.uniforms.tDepth.value=depthTexture;
+    composer.addPass(aoPass);
+    bloomPass=new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight), 0.38, 0.4, 0.86);   // subtle: high threshold so only fire/muzzle/sun/tracers glow
+    composer.addPass(bloomPass);
+    setGfxQuality(2);
+  }catch(err){ console.warn('Post-processing init failed, falling back to plain render:', err); composer=null; }
+}
+function resizePostFX(){
+  if(!composer) return;
+  const pr=renderer.getPixelRatio();
+  composer.setSize(innerWidth,innerHeight);
+  if(bloomPass) bloomPass.resolution.set(innerWidth,innerHeight);
+  if(aoPass) aoPass.uniforms.resolution.value.set(innerWidth*pr, innerHeight*pr);
+}
+function setGfxQuality(q){
+  gfxQuality=q;
+  if(aoPass) aoPass.enabled = q>=2;
+  if(bloomPass) bloomPass.enabled = q>=1;
+  const names=['Off','Bloom only','Bloom + AO'];
+  if(typeof flashPrompt==='function') flashPrompt('🖼 Graphics: '+names[q]);
+}
+function cycleGfxQuality(){ if(!composer){ flashPrompt('Post-processing unavailable in this browser.'); return; } setGfxQuality((gfxQuality+2)%3); }
 const baseW=[];
 function initWaterBase(){ const p=waterGeo.attributes.position; for(let i=0;i<p.count;i++) baseW.push([p.getX(i),p.getZ(i)]); }
 function animateWater(t){
@@ -2369,9 +2471,9 @@ function fireDynamicEvent(ground){
   if(ev==='reinforce'){ const n=1+Math.floor(Math.random()*2); for(let i=0;i<n;i++) spawnEnemy();
     flashPrompt('⚠ Dominion reinforcements — '+n+' hull'+(n>1?'s':'')+' inbound!'); if(typeof sfxAlarm==='function') sfxAlarm();
     if(typeof comms==='function') comms('RADAR','New surface contacts bearing from the enemy line.','#ff9a6a'); }
-  else if(ev==='convoy'){ const n=1+Math.floor(Math.random()*2); for(let i=0;i<n;i++) spawnAlly();
-    flashPrompt('📻 Friendly squadron joining the line');
-    if(typeof comms==='function') comms('COMMAND','Reinforcements dispatched to your position, Admiral.','#8fd0a0'); }
+  else if(ev==='convoy'){ const a=spawnCargoConvoy();
+    flashPrompt('📦 CONVOY INBOUND — escort '+a.callsign+' to '+(a.convoyTarget&&a.convoyTarget.name||'the forward line'));
+    if(typeof comms==='function') comms('COMMAND',a.callsign+' is carrying fuel and ammunition. Escort it through the combat zone.','#8fd0a0'); }
   else if(ev==='weather') turnWeather();
   else dropSupplyCrates();
 }
@@ -2608,6 +2710,7 @@ addEventListener('keydown',e=>{
   if(e.code==='KeyY' && !e.repeat) tryDispatchPlane();   // Y next to a parked plane → AI pilot (was A, which strafing on deck kept triggering by accident)
   if(e.code==='KeyQ') cycleGun();                        // Q cycles your owned small arms while ashore
   if(e.code==='KeyX') deleteTurret();                    // X scraps the deck gun you're standing next to
+  if(e.code==='KeyI'&&!e.repeat) cycleGfxQuality();       // I cycles bloom/AO quality (a perf safety valve)
   if(e.code==='KeyO'&&!e.repeat) fleetOrderCmd();         // O cycles a fleet order (attack / capture / regroup)
   if(e.code==='KeyT'){ fpv=!fpv;   // T toggles first-person / cockpit view (V is taken by mines)
     if(piloting||drivingTank||manning||driving) flashPrompt(driving?(fpv?'External chase view':'Bridge view'):(fpv?'First-person view':'Chase view')); } });
@@ -3467,6 +3570,15 @@ function spawnAlly(near){
   if(typeof comms==='function'&&!def.support&&Math.random()<0.6) comms(a.callsign,a.role==='capture'?'On station — moving to take an island.':'Reporting for duty — weapons hot.','#a8d4f0');
   allies.push(a);
 }
+function spawnCargoConvoy(){
+  const def={...SHIPS.destroyer,name:'Cargo Freighter',cls:'Supply Convoy',hp:360,support:true};
+  const build=buildAIShipModel(def,0), start=friendlyHarbor?friendlyHarbor.pos:new THREE.Vector3();
+  const pos=start.clone().add(new THREE.Vector3((Math.random()-.5)*90,0,-120-Math.random()*45));keepOffIslands(pos,def.beam/2+8);
+  const dest=islands.filter(i=>i.capturable&&i.owner!==1).sort((a,b)=>b.pos.distanceTo(start)-a.pos.distanceTo(start))[0]||enemyHarbor;
+  const a={build,hp:def.hp,maxhp:def.hp,def,pos,team:0,heading:Math.PI,vel:new THREE.Vector3(),fireT:2.4,sinkT:0,turnT:0,
+    standoff:110,orbitDir:1,loadout:[AI_WEAPS[3],AI_WEAPS[5]],upgT:1e9,planeT:99,callsign:'CONVOY-'+(_callsignN+1),role:'convoy',convoyTarget:dest,commsT:14,_sos:0};
+  allies.push(a);return a;
+}
 function spawnBoss(team){
   if((team===0&&friendlyBossUsed)||(team===1&&enemyBossUsed))return null;
   const def={...SHIPS.boss},build=buildAIShipModel(def,team),h=team===0?friendlyHarbor:enemyHarbor;
@@ -3767,6 +3879,10 @@ function updateAlly(a,dt){
   else if(a.role==='regroup' && player && player.hp>0){ objective=player.pos; stand=110; }
   else if(a.role==='capture'){ if(!a.capIsland||a.capIsland.owner===0||!a.capIsland.capturable) a.capIsland=nearestCaptureIsland(a.pos);
     if(a.capIsland){ objective=a.capIsland.pos; stand=a.capIsland.r+45; } else a.role='attack'; }
+  else if(a.role==='convoy'&&a.convoyTarget){
+    objective=a.convoyTarget.pos;stand=(a.convoyTarget.r||a.convoyTarget.rx||80)+42;
+    if(a.pos.distanceTo(objective)<stand+18){a.role='support';a.def.support=true;a.hp=Math.min(a.maxhp,a.hp+70);money+=900;updateHUD();refreshShop();
+      flashPrompt('📦 '+a.callsign+' DELIVERED — +$900, fleet resupplied');if(typeof comms==='function')comms(a.callsign,'Cargo delivered. Converting to fleet support duty.','#8fd0a0');}}
   if(!objective){ if(a.role==='assist'){a.assist=null;a.role='attack';} if(a.role==='regroup')a.role='attack';
     objective=(tgtShip&&tgtShip.pos.distanceTo(a.pos)<340+fleetRange())?tgtShip.pos:(enemyHarbor?enemyHarbor.pos:new THREE.Vector3());
     stand=(tgtShip&&objective===tgtShip.pos)?a.standoff:0; }
@@ -4137,6 +4253,26 @@ function dispatchPlane(pa){
   spawnAIPlane({pos: player.pos.clone()}, 0, pa.def);
   refreshShop(); sfxClick(); flashPrompt('🤖 '+pa.def.name+' launched under AI control — it fights for you');
 }
+function boardableEnemyShip(){
+  if(!onFoot||!player||!player.def)return null;
+  let best=null,bd=1e9;
+  enemies.forEach(e=>{if(e.sinkT>0||e.hp>e.maxhp*.28)return;const d=footPos.distanceTo(e.pos),reach=e.def.halfLen||e.def.len*.5;
+    if(d<reach+14&&d<bd){bd=d;best=e;}});
+  return best;
+}
+function captureEnemyShip(e){
+  if(!e)return false;
+  // Replace the red contact marker without rebuilding the hull: the seized ship is
+  // exactly the same object that the player fought, now flying a friendly chevron.
+  const oldMarkers=[];e.build.group.traverse(o=>{if(o.isSprite&&o.renderOrder===999)oldMarkers.push(o);});oldMarkers.forEach(m=>m.parent&&m.parent.remove(m));
+  const mk=teamMarker(0,e.def.boss?24:13);mk.position.set(0,e.def.deckY+(e.def.boss?22:13),0);e.build.group.add(mk);
+  const idx=enemies.indexOf(e);if(idx>=0)enemies.splice(idx,1);
+  e.team=0;e.hp=Math.max(e.hp,e.maxhp*.42);e.heading+=Math.PI*.15;e.fireT=2.2;e.turnT=0;e.orbitDir=Math.random()<.5?1:-1;
+  e.callsign='PRIZE-'+(_callsignN+1);e.role='attack';e._sos=0;e.commsT=12;e.upgT=1e9;e.planeT=99;
+  allies.push(e);money+=750;updateHUD();refreshShop();sfxClick();
+  if(typeof comms==='function')comms(e.callsign,'Prize crew aboard — captured hull joining the fleet.','#8fd0a0');
+  flashPrompt('⚓ SHIP CAPTURED — '+e.def.name.toUpperCase()+' JOINS YOUR FLEET · +$750');return true;
+}
 function tryDispatchPlane(){   // pressing A next to a parked plane sends a bot up in it
   if(phase!=='play'||onFoot||driving||manning||piloting||drivingTank||shopOpen||harborOpen||buildOpen) return;
   const pa=nearestPlane(); if(pa) dispatchPlane(pa);
@@ -4144,7 +4280,7 @@ function tryDispatchPlane(){   // pressing A next to a parked plane sends a bot 
 function toggleMan(){
   if(phase!=='play'||shopOpen||harborOpen) return;
   if(drivingTank){ dismountTank(); return; }
-  if(onFoot){ const ftk=nearestFieldTank(); if(ftk){ mountTank(ftk); return; }
+  if(onFoot){ const prize=boardableEnemyShip();if(prize){captureEnemyShip(prize);return;} const ftk=nearestFieldTank(); if(ftk){ mountTank(ftk); return; }
     flashPrompt(playerShipLost?'Get back to your harbor and press P for a replacement ship.':(landCampaignMode?'Find a friendly tank to crew, or keep pushing the assault.':'Press G to re-board your ship.')); return; }
   if(piloting){ if(playerShipLost&&piloting.phase==='fly'){ flashPrompt('No deck left to land on — press P to parachute, then reach harbor.'); return; }
     if(piloting.phase==='fly') startLanding(); else if(piloting.phase==='landing'){ piloting.phase='fly'; flashPrompt('Landing aborted — climb away.'); updateMode(); } return; }
@@ -5789,9 +5925,10 @@ function updatePrompt(){
   else if(capIsl){ msg=capIsl.contested?'🏝 '+capIsl.name.toUpperCase()+' CONTESTED — clear enemy ships and defenders':
       capIsl.captureTeam===0?'🏝 SECURING '+capIsl.name.toUpperCase()+' — '+Math.floor(capIsl.capture/ISLAND_CAPTURE_TIME*100)+'%':'🏝 HOLD POSITION TO CAPTURE '+capIsl.name.toUpperCase(); }
   else if(drivingTank){ const t=drivingTank; msg='Tank '+Math.max(0,Math.ceil(t.hp/t.maxhp*100))+'% — A/D tracks (both=straight) · W/S fwd/rev · Click fire · R repair · '+(t.onDeck?'G land ashore':(playerShipLost?'Ship lost':'G re-embark'))+' · T view · E dismount'+tankPartSummary(t); }
-  else if(onFoot){ const near=!landCampaignMode&&Math.hypot(footPos.x-player.pos.x,footPos.z-player.pos.z)<player.build.halfLen+18, hp=' · HP '+Math.ceil(footHP)+'%', ftk=nearestFieldTank();
-    if(playerShipLost) msg=(nearFriendlyHarborForReplacement()?'Harbor reached — press P for a replacement ship':'Ship lost — swim/walk back to your harbor')+hp+' · WASD '+(footLand?'walk':'swim')+' · Click: '+(HANDHELD[equippedGun]||HANDHELD.pistol).name;
-    else msg=(ftk?'Press E to crew '+(ftk.name||'tank')+' · ':'')+(landCampaignMode?'Airborne assault':(footLand?'Ashore':'Swimming'))+hp+' — WASD '+(footLand?'walk':'swim')+' · Click: '+(HANDHELD[equippedGun]||HANDHELD.pistol).name+' · Q switch'+(footLand?' · B build':'') + (near?'   ·   G re-board':''); }
+  else if(onFoot){ const near=!landCampaignMode&&!playerShipLost&&Math.hypot(footPos.x-player.pos.x,footPos.z-player.pos.z)<player.build.halfLen+18, hp=' · HP '+Math.ceil(footHP)+'%', prize=boardableEnemyShip(),ftk=nearestFieldTank();
+    if(prize) msg='⚓ CRIPPLED '+prize.def.name.toUpperCase()+' — PRESS E TO BOARD'+hp+' · Claim it before it sinks.';
+    else if(playerShipLost) msg=(nearFriendlyHarborForReplacement()?'Harbor reached — press P for a replacement ship':'Ship lost — swim/walk back to your harbor')+hp+' · WASD '+(footLand?'walk':'swim')+' · Click: '+(HANDHELD[equippedGun]||HANDHELD.pistol).name;
+    else msg=(prize?'⚓ CRIPPLED '+prize.def.name.toUpperCase()+' — PRESS E TO BOARD · ':(ftk?'Press E to crew '+(ftk.name||'tank')+' · ':''))+(landCampaignMode?'Airborne assault':(footLand?'Ashore':'Swimming'))+hp+' — WASD '+(footLand?'walk':'swim')+' · Click: '+(HANDHELD[equippedGun]||HANDHELD.pistol).name+' · Q switch'+(footLand?' · B build':'') + (near?'   ·   G re-board':''); }
   else if(driving){ msg='Steering — W/S throttle · A/D rudder' + (player.def.kind==='sub'?'   ·   C dive/surface':'') + '   ·   T view   ·   E to step away'; }
   else if(piloting){
     if(piloting.phase==='takeoff') msg='Taking off…';
@@ -5993,7 +6130,14 @@ function loop(){
   requestAnimationFrame(loop);
   const dt=Math.min(0.05, clock.getDelta()); t2+=dt;
   if(phase==='play'){ update(dt,t2); updateHUD(); }
-  renderer.render(scene,camera);
+  if(composer && gfxQuality>0){
+    if(aoPass && aoPass.enabled){
+      aoPass.uniforms.cameraNear.value=camera.near; aoPass.uniforms.cameraFar.value=camera.far;
+      aoPass.uniforms.cameraProjectionMatrix.value.copy(camera.projectionMatrix);
+      aoPass.uniforms.cameraProjectionMatrixInverse.value.copy(camera.projectionMatrixInverse);
+    }
+    composer.render();
+  } else renderer.render(scene,camera);
 }
 
 // boot — show the menu immediately (pure DOM), then start 3D once Three.js is ready.
