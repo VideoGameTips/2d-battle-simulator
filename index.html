@@ -426,7 +426,7 @@ function initThree(){
   renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:true});
   renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(1.5,devicePixelRatio));
   renderer.shadowMap.enabled=false;   // shadows were rendering ~20k meshes twice — huge cost
-  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.05;   // filmic curve only — no sRGB remap, keeps the original palette (silver ships stay silver)
+  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.0;   // neutral exposure; ship paint is tuned locally below
   scene=new THREE.Scene();
   scene.background=new THREE.Color(0x9fb8cc);
   scene.fog=new THREE.Fog(0x9fb8cc, 900, 9000);
@@ -453,7 +453,7 @@ function initThree(){
 //  single-pass ambient-occlusion for contact shadows (turret-on-deck, tank-
 //  on-hull, crates on floors). Press I to cycle quality if it's ever too slow.
 // =====================================================================
-let composer=null, aoPass=null, bloomPass=null, gfxQuality=2;   // 2=AO+Bloom, 1=Bloom only, 0=off
+let composer=null, aoPass=null, bloomPass=null, gfxQuality=0;   // AO is disabled: its depth noise was visible over the ocean
 const AOShader = {
   uniforms:{ tDiffuse:{value:null}, tDepth:{value:null}, cameraNear:{value:0.1}, cameraFar:{value:20000},
     cameraProjectionMatrix:{value:new THREE.Matrix4()}, cameraProjectionMatrixInverse:{value:new THREE.Matrix4()},
@@ -511,12 +511,12 @@ function initPostFX(){
     const rt=new THREE.WebGLRenderTarget(w,h,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,format:THREE.RGBAFormat,depthTexture,depthBuffer:true});
     composer=new THREE.EffectComposer(renderer, rt);
     composer.addPass(new THREE.RenderPass(scene,camera));
-    aoPass=new THREE.ShaderPass(AOShader);
-    aoPass.uniforms.tDepth.value=depthTexture;
-    composer.addPass(aoPass);
-    bloomPass=new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight), 0.38, 0.4, 0.86);   // subtle: high threshold so only fire/muzzle/sun/tracers glow
+    // Do not add the custom AO pass. On the ocean's enormous depth range it
+    // produced visible screen-space grain, especially at the bottom of frame.
+    aoPass=null;
+    bloomPass=new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight), 0.22, 0.35, 1.12);  // opt-in only; threshold excludes matte hull paint
     composer.addPass(bloomPass);
-    setGfxQuality(2);
+    setGfxQuality(0);  // clean baseline; bloom is an opt-in visual effect
   }catch(err){ console.warn('Post-processing init failed, falling back to plain render:', err); composer=null; }
 }
 function resizePostFX(){
@@ -528,9 +528,9 @@ function resizePostFX(){
 }
 function setGfxQuality(q){
   gfxQuality=q;
-  if(aoPass) aoPass.enabled = q>=2;
+  if(aoPass) aoPass.enabled = false;
   if(bloomPass) bloomPass.enabled = q>=1;
-  const names=['Off','Bloom only','Bloom + AO'];
+  const names=['Clean','Bloom','Bloom'];
   if(typeof flashPrompt==='function') flashPrompt('🖼 Graphics: '+names[q]);
 }
 function cycleGfxQuality(){ if(!composer){ flashPrompt('Post-processing unavailable in this browser.'); return; } setGfxQuality((gfxQuality+2)%3); }
@@ -1027,9 +1027,9 @@ function setShipWake(build,speed){
 }
 function buildShip(def, enemy){
   const g=new THREE.Group();
-  const L=def.len/2, B=def.beam/2, deckY=def.deckY, col = enemy?0x8f9298:0xc4c8ce;
+  const L=def.len/2, B=def.beam/2, deckY=def.deckY, col = enemy?0x596067:0x77818a;
   // Paint only the broad hull/superstructure panels matte. Hardware remains metal.
-  const hullPaint=PAINT(col), deckPaint=PAINT(enemy?0x5c6268:0x717980);
+  const hullPaint=PAINT(col), deckPaint=PAINT(enemy?0x444a50:0x586169);
   const mounts=[];
   g.userData.walkBlocks=[];
   if(def.kind==='sub'){
