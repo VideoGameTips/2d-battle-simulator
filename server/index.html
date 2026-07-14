@@ -280,6 +280,8 @@ const PLANES = {
            guns:{dmg:8,spd:200,cd:0.05,kind:'gun',col:0xffd040}, bomb:{dmg:42,splash:5,kind:'missile',homing:true,spd:135,col:0x3a4036,range:240}, bombs:10, desc:'Attack helo — hover, chain gun + homing rockets.' },
   cobra: { name:'AH-1 Cobra',   cost:1300, hp:80,  speed:0, maxSpeed:74, turn:2.7, climb:22, col:0x44503a, shape:'heli', heli:true,
            guns:{dmg:6,spd:195,cd:0.045,kind:'gun',col:0xffd040}, bomb:{dmg:32,splash:5,kind:'bomb',col:0x4a4e3a}, bombs:7, desc:'Light fast gunship. Nimble in the hover.' },
+  uav:   { name:'RQ-7 Scout UAV', cost:450, hp:24, speed:58, maxSpeed:118, turn:2.45, col:0x657b78, shape:'jet', jet:true, scale:.42, fuel:95, uav:true,
+           desc:'Unarmed first-person reconnaissance drone. Reveals enemy contacts at long range; losing it returns you safely to your ship.' },
   // ---- WWII prop ----
   p51:  { name:'P-51 Mustang', cost:950, hp:70,  speed:62, maxSpeed:108, turn:1.9, col:0xb9bec6, shape:'prop',
           guns:{dmg:8,spd:200,cd:0.06,kind:'gun',col:0xffe070}, desc:'Fast prop fighter — six .50 cals, superb dogfighter.' },
@@ -1994,7 +1996,7 @@ function buildCockpitView(def){
   return g;
 }
 function updateCockpitView(){
-  const active=!!(piloting&&fpv&&piloting.plane&&piloting.plane.group);
+  const active=!!(piloting&&fpv&&piloting.plane&&piloting.plane.group&&!piloting.plane.def.uav);
   const id=active?piloting.plane.def.name:'';
   if(active&&(!cockpitView||cockpitViewId!==id)){
     if(cockpitView)destroyObject3D(cockpitView);
@@ -2389,6 +2391,7 @@ const planes=[];           // bought planes {def, group, spot, parked, bombsLeft
 const crew=[];             // ambient sailors {mesh, base, phase}
 const aiPlanes=[];         // AI aircraft, BOTH teams {def, group, pos, heading, hp, team, ...}
 const AIR_CAP=8;           // max aircraft aloft per side
+const MAX_PLAYER_UAVS=5;   // hard cap keeps reconnaissance useful without creating an entity swarm
 const allies=[];           // friendly AI ships (team 0) — respawn at your harbor
 const islands=[];          // {pos, r, group}
 const landUnits=[];        // enemy coastal guns / tanks / soldiers {kind, pos, hp, group, turret, fireT, range, dmg}
@@ -3712,7 +3715,7 @@ function enemyDetectedAt(pos,stealth=1){
   if(!player||!pos)return false;
   const d=pos.distanceTo(activePlayerWorldPos());
   if(sonarPulse>0&&d<1100)return true;
-  const airborneRecon=piloting?2.4:1; // altitude gives aircraft a useful scouting horizon
+  const airborneRecon=piloting?(piloting.plane.def.uav?4.4:2.4):1; // UAV optics have the widest scouting horizon
   const range=(620+fleetRange())*weatherVis()*stealth*airborneRecon;
   return d<range;
 }
@@ -4289,14 +4292,14 @@ function captureEnemyShip(e){
 }
 function tryDispatchPlane(){   // pressing A next to a parked plane sends a bot up in it
   if(phase!=='play'||onFoot||driving||manning||piloting||drivingTank||shopOpen||harborOpen||buildOpen) return;
-  const pa=nearestPlane(); if(pa) dispatchPlane(pa);
+  const pa=nearestPlane(); if(pa&&pa.def.uav){flashPrompt('UAVs need your remote pilot — press E to launch.');return;} if(pa) dispatchPlane(pa);
 }
 function toggleMan(){
   if(phase!=='play'||shopOpen||harborOpen) return;
   if(drivingTank){ dismountTank(); return; }
   if(onFoot){ const prize=boardableEnemyShip();if(prize){captureEnemyShip(prize);return;} const ftk=nearestFieldTank(); if(ftk){ mountTank(ftk); return; }
     flashPrompt(playerShipLost?'Get back to your harbor and press P for a replacement ship.':(landCampaignMode?'Find a friendly tank to crew, or keep pushing the assault.':'Press G to re-board your ship.')); return; }
-  if(piloting){ if(playerShipLost&&piloting.phase==='fly'){ flashPrompt('No deck left to land on — press P to parachute, then reach harbor.'); return; }
+  if(piloting){ if(piloting.plane.def.uav){returnFromUAV(false,'UAV recovered');return;} if(playerShipLost&&piloting.phase==='fly'){ flashPrompt('No deck left to land on — press P to parachute, then reach harbor.'); return; }
     if(piloting.phase==='fly') startLanding(); else if(piloting.phase==='landing'){ piloting.phase='fly'; flashPrompt('Landing aborted — climb away.'); updateMode(); } return; }
   if(driving){ stopDrive(); return; }
   if(manning){ manning=null; updateMode(); return; }
@@ -4314,6 +4317,7 @@ function toggleMan(){
 // ---------- planes: buy / fly / land ----------
 function buyPlane(id){
   const p=PLANES[id]; const cost=priceOf(p.cost);
+  if(p.uav&&planes.filter(q=>q.def.uav).length>=MAX_PLAYER_UAVS){flashPrompt('Drone bay limit reached ('+MAX_PLAYER_UAVS+')');return;}
   if(money<cost){ flashPrompt('Not enough funds'); return; }
   const spot=planeSpots.find(s=>!s.taken);
   if(!spot){ flashPrompt('No free flight spot on deck'); return; }
@@ -4361,6 +4365,7 @@ function flyPlane(pa){
   piloting={ plane:pa, pos:wp.clone(), speed:pa.def.speed*0.35, gunCd:0, bombCd:0, roll:0, lastYaw:player.heading||0, phase:'takeoff', taxiT:0, hp:pa.def.hp, maxhp:pa.def.hp,
     fuel,fuelMax:fuel,engineOn:true,gLoad:0,stallT:0,parts:initPlaneParts(pa.def) };
   pa.parked=false; camYaw.v=player.heading||0; camPitch.v=0.05;
+  if(pa.def.uav) fpv=true;
   const cv=document.getElementById('c'); if(document.pointerLockElement!==cv) cv.requestPointerLock();
   flashPrompt('Takeoff roll…'); updateMode();
 }
@@ -4461,12 +4466,24 @@ function hurtPlayerPlane(dmg){ // you, flying, took flak/cannon fire
   else flashPrompt('Hit! '+Math.max(0,Math.ceil(piloting.hp/piloting.maxhp*100))+'%'+partSummary(piloting));
 }
 function crashPlane(msg){ // destroyed (ocean ditch / hit the sea / kamikaze)
+  if(piloting&&piloting.plane.def.uav){ returnFromUAV(true,msg||'UAV destroyed'); return; }
   const pa=piloting.plane;
   blastAll(piloting.pos.clone().setY(1.5), 40, 13); splashAt(piloting.pos.clone().setY(0.5),2.5);
   destroyObject3D(pa.group); pa.spot.taken=false;
   const i=planes.indexOf(pa); if(i>=0) planes.splice(i,1);
   piloting=null;
   showRespawnMenu((msg||'Aircraft lost!')+' You did not bail out — choose another ship or restart from harbor.');
+}
+function returnFromUAV(destroyed,msg){
+  const P=piloting,pa=P&&P.plane;if(!pa)return;
+  if(destroyed){
+    splashAt(P.pos.clone().setY(.5),.75);destroyObject3D(pa.group);pa.spot.taken=false;
+    const i=planes.indexOf(pa);if(i>=0)planes.splice(i,1);
+  }else{
+    player.build.group.attach(pa.group);pa.group.position.copy(pa.spot.pos);pa.group.rotation.set(0,0,0);pa.parked=true;setPlaneGearVisual(pa,true);
+  }
+  piloting=null;fpv=false;mouseDownFire=false;camPitch.v=.04;
+  flashPrompt((msg||'UAV link ended')+' — captain safely back aboard.');updateMode();
 }
 function startDrive(){
   driving=true; camYaw.v=player.heading||0; camPitch.v=0.05;
@@ -5117,7 +5134,7 @@ function parachuteFromAircraft(){
   updateMode(); return true;
 }
 function bailoutOrBoard(){
-  if(piloting){ parachuteFromAircraft(); return; }
+  if(piloting){ if(piloting.plane.def.uav){returnFromUAV(false,'UAV recalled');return;} parachuteFromAircraft(); return; }
   if(nearFriendlyHarborForReplacement()){
     showRespawnMenu('Back at harbor — choose your replacement ship. Your last ship is gone for good.');
     return;
@@ -5889,7 +5906,10 @@ function updateCamera(){
   } else if(piloting){
     const P=piloting,pa=P.plane,def=pa.def,yaw=camYaw.v,pitch=Math.max(-1.1,Math.min(1.1,camPitch.v));
     const dir=new THREE.Vector3(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));
-    if(fpv){ // seated in the actual cockpit (uses the airframe's own transform so you don't clip the fuselage)
+    if(def.uav){ // direct camera feed: no cockpit and no exterior drone blocking the optics
+      const eye=P.pos.clone().addScaledVector(dir,.48).add(new THREE.Vector3(0,.08,0));
+      camera.position.copy(eye);camera.lookAt(eye.clone().add(dir.multiplyScalar(90)));
+    } else if(fpv){ // seated in the actual cockpit (uses the airframe's own transform so you don't clip the fuselage)
       const heavy=def.shape==='heavyprop'||def.shape==='heavyjet';
       const off=def.heli?new THREE.Vector3(0,def.flyingFortress ? .55 : .35,def.flyingFortress?2.0:1.2):
         new THREE.Vector3(0,heavy ? .55 : .5,heavy?3.65:1.0);
@@ -5961,7 +5981,7 @@ function updatePrompt(){
     else { const heli=piloting.plane.def.heli; const b=piloting.plane.def.bomb?`   ·   Space drop (${piloting.plane.bombsLeft})`:'';
       const ga=piloting.plane.gunAmmo==null?'':`   ·   Gun ammo ${piloting.plane.gunAmmo}`;
       const f=Math.ceil(piloting.fuel/piloting.fuelMax*100); const eng = !piloting.engineOn ? '   ·   ⚠ ENGINE OUT' : (f<25?'   ·   ⚠ LOW FUEL':'');
-      msg=(heli?'W/S fwd · A/D turn · Mouse = climb/descend':'W/S throttle · A/D turn · Mouse = pitch')+' · Click guns'+ga+b+`   ·   Fuel ${f}%`+eng+(piloting.parts?partSummary(piloting):'')+'   ·   P parachute · T view · E to land'; }
+      msg=piloting.plane.def.uav?'UAV FEED — W/S throttle · A/D turn · Mouse = pitch · long-range recon   ·   Battery '+f+'%   ·   E/P recall':(heli?'W/S fwd · A/D turn · Mouse = climb/descend':'W/S throttle · A/D turn · Mouse = pitch')+' · Click guns'+ga+b+`   ·   Fuel ${f}%`+eng+(piloting.parts?partSummary(piloting):'')+'   ·   P parachute · T view · E to land'; }
   }
   else if(!manning && !shopOpen && !harborOpen){
     const tu=nearestTurret(), pa=nearestPlane(), hm=nearestHelm(), dtk=nearestDeckTank();
