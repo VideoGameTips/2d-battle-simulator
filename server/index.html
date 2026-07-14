@@ -527,13 +527,22 @@ function resizePostFX(){
   if(aoPass) aoPass.uniforms.resolution.value.set(innerWidth*pr, innerHeight*pr);
 }
 function setGfxQuality(q){
-  gfxQuality=q;
+  gfxQuality=Math.max(0,Math.min(1,q));
   if(aoPass) aoPass.enabled = false;
-  if(bloomPass) bloomPass.enabled = q>=1;
-  const names=['Clean','Bloom','Bloom'];
-  if(typeof flashPrompt==='function') flashPrompt('🖼 Graphics: '+names[q]);
+  if(bloomPass) bloomPass.enabled = gfxQuality>=1;
+  const names=['Clean','Bloom'];
+  if(typeof flashPrompt==='function') flashPrompt('🖼 Graphics: '+names[gfxQuality]);
 }
-function cycleGfxQuality(){ if(!composer){ flashPrompt('Post-processing unavailable in this browser.'); return; } setGfxQuality((gfxQuality+2)%3); }
+function cycleGfxQuality(){ if(!composer){ flashPrompt('Post-processing unavailable in this browser.'); return; } setGfxQuality((gfxQuality+1)%2); }
+let frameEMA=16.7, qualitySlowT=0, qualityFastT=0;
+function updateAdaptiveQuality(rawDt){
+  if(!renderer||!Number.isFinite(rawDt))return;
+  const ms=Math.min(100,rawDt*1000), maxPR=Math.min(1.5,devicePixelRatio||1);
+  frameEMA+=(ms-frameEMA)*.07;
+  if(frameEMA>30){qualitySlowT+=rawDt;qualityFastT=0;} else if(frameEMA<18){qualityFastT+=rawDt;qualitySlowT=0;} else{qualitySlowT=Math.max(0,qualitySlowT-rawDt);qualityFastT=Math.max(0,qualityFastT-rawDt);}
+  if(qualitySlowT>4){const next=Math.max(.75,renderer.getPixelRatio()-.25);if(next<renderer.getPixelRatio()){renderer.setPixelRatio(next);renderer.setSize(innerWidth,innerHeight);resizePostFX();flashPrompt('⚙ Performance mode: render detail reduced');}if(gfxQuality>0)setGfxQuality(0);qualitySlowT=0;}
+  else if(qualityFastT>12&&renderer.getPixelRatio()<maxPR-.01){renderer.setPixelRatio(Math.min(maxPR,renderer.getPixelRatio()+.25));renderer.setSize(innerWidth,innerHeight);resizePostFX();qualityFastT=0;}
+}
 const baseW=[];
 function initWaterBase(){ const p=waterGeo.attributes.position; for(let i=0;i<p.count;i++) baseW.push([p.getX(i),p.getZ(i)]); }
 function animateWater(t){
@@ -774,14 +783,16 @@ function sfxToggle(){ SFX.on=!SFX.on; if(SFX.master) SFX.master.gain.value=SFX.o
 function _dg(pos,maxD){ if(!pos||!camera) return 1; const d=camera.position.distanceTo(pos); return d>maxD?0:1-d/maxD; }
 function _voice(t){ if(SFX.voices>14) return false; SFX.voices++; setTimeout(()=>{SFX.voices=Math.max(0,SFX.voices-1);}, t*1000); return true; }
 function _noise(dur){ const s=SFX.ctx.createBufferSource(); s.buffer=SFX.noiseBuf; return s; }   // reuses the shared buffer
-function sfxFire(kind,pos){
+function sfxFire(weapon,pos){
   if(!SFX.on||!SFX.ctx) return; const now=performance.now(); if(now-SFX.lastGun<26) return;   // global rate cap
-  const heavy=kind==='cannon', mid=kind==='missile'||kind==='bomb'||kind==='torpedo';
+  const w=typeof weapon==='string'?{kind:weapon}:weapon||{};
+  const kind=w.kind||'gun', damage=w.dmg||12, caliber=w.size||0.5;
+  const heavy=kind==='cannon'||damage>=58||caliber>=1.55, mid=kind==='missile'||kind==='bomb'||kind==='torpedo';
   const ctx=SFX.ctx, t0=ctx.currentTime;
   if(mid){ // missiles / torpedoes — a launch whoosh
     const g0=_dg(pos,440)*0.3; if(g0<=0.02||!_voice(0.22)) return; SFX.lastGun=now;
     const s=_noise(0.22), f=ctx.createBiquadFilter(), g=ctx.createGain();
-    f.type='bandpass'; f.frequency.setValueAtTime(500,t0); f.frequency.exponentialRampToValueAtTime(1600,t0+0.2);
+    f.type='bandpass'; f.frequency.setValueAtTime(kind==='torpedo'?260:420,t0); f.frequency.exponentialRampToValueAtTime(kind==='torpedo'?720:1500+Math.min(500,damage*6),t0+0.2);
     g.gain.setValueAtTime(g0,t0); g.gain.exponentialRampToValueAtTime(0.001,t0+0.22);
     s.connect(f); f.connect(g); g.connect(SFX.master); s.start(); s.stop(t0+0.22); return;
   }
@@ -790,15 +801,15 @@ function sfxFire(kind,pos){
   SFX.lastGun=now; const dur=heavy?0.34:0.12;
   // --- SNAP: sharp opening transient ---
   { const s=_noise(0.02), f=ctx.createBiquadFilter(), g=ctx.createGain();
-    f.type='highpass'; f.frequency.value=heavy?1800:2600;
+    f.type='highpass'; f.frequency.value=heavy?1250:Math.max(1700,3000-damage*26);
     g.gain.setValueAtTime(g0*0.55,t0); g.gain.exponentialRampToValueAtTime(0.001,t0+0.02);
     s.connect(f); f.connect(g); g.connect(SFX.master); s.start(t0); s.stop(t0+0.025); }
   // --- BLAST: full body, fast attack + downward filter sweep + low thump ---
   { const s=_noise(dur), f=ctx.createBiquadFilter(), g=ctx.createGain();
-    f.type='lowpass'; f.frequency.setValueAtTime(heavy?1400:2200,t0); f.frequency.exponentialRampToValueAtTime(heavy?180:420,t0+dur*0.8);
+    f.type='lowpass'; f.frequency.setValueAtTime(heavy?1100+caliber*130:1800+Math.min(800,damage*22),t0); f.frequency.exponentialRampToValueAtTime(heavy?140:360,t0+dur*0.8);
     g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(g0,t0+0.006); g.gain.exponentialRampToValueAtTime(0.001,t0+dur*0.85);
     s.connect(f); f.connect(g); g.connect(SFX.master); s.start(t0); s.stop(t0+dur);
-    const o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(heavy?150:230,t0); o.frequency.exponentialRampToValueAtTime(heavy?45:90,t0+dur*0.7);
+    const o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(heavy?Math.max(70,165-damage*.7):Math.max(150,290-damage*3),t0); o.frequency.exponentialRampToValueAtTime(heavy?38:80,t0+dur*0.7);
     const og=ctx.createGain(); og.gain.setValueAtTime(g0*0.85,t0); og.gain.exponentialRampToValueAtTime(0.001,t0+dur*0.8);
     o.connect(og); og.connect(SFX.master); o.start(t0); o.stop(t0+dur); }
   // --- RECOIL: brief mechanical tail ---
@@ -3893,12 +3904,13 @@ function updateAlly(a,dt){
     if(a.role==='capture'&&a.capIsland&&dP<stand+30) commsShip(a,'Holding off '+(a.capIsland.name||'the island')+' — securing it.','#7fd0a0');
     else if(tgtShip&&tgtShip.pos.distanceTo(a.pos)<300) commsShip(a,'Engaging enemy contact!','#a8d4f0'); } }
   a.turnT-=dt; if(a.turnT<=0){ a.jink=(Math.random()-0.5)*0.4; a.turnT=2.5+Math.random()*3; } desired+=a.jink||0;
+  desired=steerClearOfIslands(a.pos,a.def,desired);
   desired=steerClearOfShips(a,a.pos,a.def,desired);   // don't sail into friendly or enemy hulls
   let dh=desired-a.heading; while(dh>Math.PI)dh-=6.283; while(dh<-Math.PI)dh+=6.283;
   const turnRate=a.def.boss ? 0.24 : a.def.len>70?0.45:0.8; a.heading+=Math.max(-turnRate*dt,Math.min(turnRate*dt,dh));
   const sp=(a.def.boss?6.5:a.def.kind==='scout'?15:a.def.len>70?9:13)*engineFactor(a); a.pos.x+=Math.sin(a.heading)*sp*dt; a.pos.z+=Math.cos(a.heading)*sp*dt;
   a.vel=new THREE.Vector3(Math.sin(a.heading)*sp,0,Math.cos(a.heading)*sp);
-  keepOffIslands(a.pos, a.def.beam/2+4);
+  keepOffIslands(a.pos, shipRadius(a.def)+8);
   if(a.build){ const sea=(typeof weather==='object'&&weather.sea)?weather.sea:1;
     let dH=a.heading-(a._ph!=null?a._ph:a.heading); a._ph=a.heading; while(dH>Math.PI)dH-=6.283; while(dH<-Math.PI)dH+=6.283;
     a._heel=(a._heel||0)+((Math.max(-0.3,Math.min(0.3,dH/Math.max(dt,0.008)*0.1))-(a._heel||0)))*Math.min(1,dt*3);
@@ -4617,7 +4629,7 @@ function fireTurret(pl, aim){
     spawnShell(w,muzzle.clone(),d,0,null);
   }
   pl.recoil=0.5;
-  muzzleFlash(muzzle);
+  muzzleFlash(muzzle,Math.min(2.5,.55+(w.size||.5)*.7),w.col);
   if(w.dmg>=55||w.kind==='cannon'||w.kind==='bomb') addCameraShake(muzzle,Math.min(.8,.22+w.dmg/160));
 }
 function spawnShell(w,pos,dir,team,owner,enemyArc,velOverride){
@@ -4625,6 +4637,7 @@ function spawnShell(w,pos,dir,team,owner,enemyArc,velOverride){
   // Firing breaks concealment: no more tracers appearing to come from an innocent tree.
   if(owner&&owner.team===1&&owner.group&&owner.kind){owner.revealT=Math.max(owner.revealT||0,4);owner.group.visible=true;}
   let geo, col=w.col||0xffe0a0;
+  const tracerCol=w.tracerCol||(w.kind==='missile'?0xff5530:w.kind==='torpedo'?0x72d8ff:w.kind==='cannon'?(w.dmg>=65?0xffa050:0xffdc58):w.aa?0x76d8ff:w.dmg>=30?0xffa14a:0xffdf78);
   if(w.nuclear){geo=new THREE.CylinderGeometry(1.2,1.55,8,18);}
   else if(w.strategic){geo=new THREE.CylinderGeometry(.65,.9,3.4,14);}
   else if(w.kind==='torpedo'){ geo=new THREE.CylinderGeometry(0.18,0.18,1.6,8); }
@@ -4646,23 +4659,23 @@ function spawnShell(w,pos,dir,team,owner,enemyArc,velOverride){
   if(w.kind!=='torpedo'){
     const heavy = w.kind==='cannon'||w.kind==='bomb'||w.kind==='missile'||w.splash;
     const trail=new THREE.Mesh(new THREE.CylinderGeometry(heavy?0.26:0.11, 0.015, 1, 6),
-      new THREE.MeshBasicMaterial({color:heavy?0xff8a28:0xffd860,transparent:true,opacity:heavy?0.8:0.65,blending:THREE.AdditiveBlending,depthWrite:false}));
+      new THREE.MeshBasicMaterial({color:tracerCol,transparent:true,opacity:heavy?0.8:0.65,blending:THREE.AdditiveBlending,depthWrite:false}));
     const core=new THREE.Mesh(new THREE.CylinderGeometry(heavy?0.09:0.04, 0.008, 1, 5),
-      new THREE.MeshBasicMaterial({color:0xfff4d8,transparent:true,opacity:0.9,blending:THREE.AdditiveBlending,depthWrite:false}));
+      new THREE.MeshBasicMaterial({color:heavy?0xfff2d0:tracerCol,transparent:true,opacity:0.9,blending:THREE.AdditiveBlending,depthWrite:false}));
     core.scale.y=0.55; trail.add(core);                       // hot core rides the front half of the streak
     core.position.y=0.22;
     scene.add(trail); sh.trail=trail; sh.heavy=heavy; sh.trailLen=Math.min(heavy?8:9,(w.spd||vel.length())*0.06);
   }
   shells.push(sh);
-  sfxFire(w.kind, pos);
+  sfxFire(w, pos);
 }
-function muzzleFlash(pos){
-  const f=_spr(fireTex(),true); f.scale.setScalar(2.6); f.position.copy(pos); scene.add(f);   // hot star flash
-  fx.push({mesh:f,life:0.09,max:0.09,op:1,fade:true,grow:true,growRate:9,c0:new THREE.Color(0xfff4d0),c1:new THREE.Color(0xff8828)});
+function muzzleFlash(pos,scale=1,col=0xffb040){
+  const f=_spr(fireTex(),true); f.scale.setScalar(2.6*scale); f.position.copy(pos); scene.add(f);   // hot star flash
+  fx.push({mesh:f,life:0.09,max:0.09,op:1,fade:true,grow:true,growRate:9,c0:new THREE.Color(0xfff4d0),c1:new THREE.Color(col||0xff8828)});
   if(fx.length<MAX_FX-30){ const s=_spr(smokeTex(),false); s.material.color.setHex(0x8a8a8a); s.scale.setScalar(1.3);   // cordite puff drifting off the muzzle
     s.position.copy(pos); scene.add(s);
     fx.push({mesh:s,life:0.8,max:0.8,op:0.3,fade:true,grow:true,growRate:2.6,srot:(Math.random()-0.5),vel:new THREE.Vector3((Math.random()-0.5)*1.5,1.6,(Math.random()-0.5)*1.5)}); }
-  const l=new THREE.PointLight(0xffc060,3,16); l.position.copy(pos); scene.add(l); fx.push({mesh:l,life:0.12,light:true});
+  const l=new THREE.PointLight(col||0xffc060,3*scale,16*scale); l.position.copy(pos); scene.add(l); fx.push({mesh:l,life:0.12,light:true});
 }
 function splashAt(pos,scale){
   const s=new THREE.Mesh(new THREE.ConeGeometry(1.2*scale,3*scale,10,1,true), new THREE.MeshBasicMaterial({color:0xcfeaff,transparent:true,opacity:0.7,side:THREE.DoubleSide}));
@@ -5234,7 +5247,7 @@ function updateDrive(dt){
   player.pos.x+=Math.sin(player.heading)*player.speed*dt;
   player.pos.z+=Math.cos(player.heading)*player.speed*dt;
   const lim=4900; player.pos.x=Math.max(-lim,Math.min(lim,player.pos.x)); player.pos.z=Math.max(-lim,Math.min(lim,player.pos.z));
-  keepOffIslands(player.pos, player.build.halfBeam+4);
+  keepOffIslands(player.pos, shipRadius(def)+8);
 }
 function updateManned(dt){
   const pl=manning;
@@ -5267,6 +5280,7 @@ function updateEnemy(e,dt){
   // occasional jink so they aren't perfectly predictable
   e.turnT-=dt; if(e.turnT<=0){ e.jink=(Math.random()-0.5)*0.5; e.turnT=2.5+Math.random()*3; }
   desired+=e.jink||0;
+  desired=steerClearOfIslands(e.pos,e.def,desired);
   desired=steerClearOfShips(e,e.pos,e.def,desired);   // don't sail into other hulls
   // soft world bound
   if(Math.hypot(e.pos.x,e.pos.z)>380){ desired=Math.atan2(-e.pos.x,-e.pos.z); }
@@ -5276,7 +5290,7 @@ function updateEnemy(e,dt){
   const sp=(e.def.boss?6.5:e.def.kind==='scout'?15:e.def.len>70?9:13)*engineFactor(e);
   e.pos.x+=Math.sin(e.heading)*sp*dt; e.pos.z+=Math.cos(e.heading)*sp*dt;
   e.vel=new THREE.Vector3(Math.sin(e.heading)*sp,0,Math.cos(e.heading)*sp);
-  keepOffIslands(e.pos, e.def.beam/2+4);
+  keepOffIslands(e.pos, shipRadius(e.def)+8);
   if(e.build){ const sea=(typeof weather==='object'&&weather.sea)?weather.sea:1;
     let dH=e.heading-(e._ph!=null?e._ph:e.heading); e._ph=e.heading; while(dH>Math.PI)dH-=6.283; while(dH<-Math.PI)dH+=6.283;
     e._heel=(e._heel||0)+((Math.max(-0.3,Math.min(0.3,dH/Math.max(dt,0.008)*0.1))-(e._heel||0)))*Math.min(1,dt*3);
@@ -5356,6 +5370,15 @@ function keepOffIslands(pos,margin){ // push a ship out of any island / harbor f
   const obs=islands.slice(); if(enemyHarbor) obs.push({pos:enemyHarbor.pos,r:enemyHarbor.r}); if(friendlyHarbor) obs.push({pos:friendlyHarbor.pos,r:friendlyHarbor.r});
   obs.forEach(o=>{ const q=islandLocal(pos,o),rx=(o.rx||o.r)+margin,rz=(o.rz||o.r)+margin,n=Math.hypot(q.x/rx,q.z/rz);
     if(n<1){ const x=n>0.001?q.x/n:rx,z=n>0.001?q.z/n:0,p=islandWorld(o,x,z); pos.x=p.x; pos.z=p.z; } });
+}
+function steerClearOfIslands(pos,def,desired){
+  const safe=shipRadius(def)+32; let steer=new THREE.Vector3();
+  const obs=islands.slice();if(enemyHarbor)obs.push({pos:enemyHarbor.pos,r:enemyHarbor.r});if(friendlyHarbor)obs.push({pos:friendlyHarbor.pos,r:friendlyHarbor.r});
+  for(const o of obs){const q=islandLocal(pos,o),rx=(o.rx||o.r)+safe,rz=(o.rz||o.r)+safe,n=Math.hypot(q.x/rx,q.z/rz);
+    if(n<1.3){const p=islandWorld(o,q.x/Math.max(n,.001),q.z/Math.max(n,.001));steer.add(pos.clone().sub(p).setY(0).multiplyScalar((1.3-n)*1.9));}}
+  if(steer.lengthSq()<.001)return desired;
+  const away=Math.atan2(steer.x,steer.z),delta=Math.atan2(Math.sin(away-desired),Math.cos(away-desired));
+  return desired+Math.max(-.95,Math.min(.95,delta));
 }
 function hitSpark(pos){
   const s=new THREE.Mesh(new THREE.SphereGeometry(0.42,8,8), new THREE.MeshBasicMaterial({color:0xfff0a0,transparent:true,opacity:0.95,blending:THREE.AdditiveBlending,depthWrite:false}));
@@ -6128,7 +6151,8 @@ function endGame(win,msg){
 // =====================================================================
 function loop(){
   requestAnimationFrame(loop);
-  const dt=Math.min(0.05, clock.getDelta()); t2+=dt;
+  const rawDt=clock.getDelta(),dt=Math.min(0.05,rawDt); t2+=dt;
+  updateAdaptiveQuality(rawDt);
   if(phase==='play'){ update(dt,t2); updateHUD(); }
   if(composer && gfxQuality>0){
     if(aoPass && aoPass.enabled){
