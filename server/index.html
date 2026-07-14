@@ -4480,10 +4480,17 @@ function returnFromUAV(destroyed,msg){
     splashAt(P.pos.clone().setY(.5),.75);destroyObject3D(pa.group);pa.spot.taken=false;
     const i=planes.indexOf(pa);if(i>=0)planes.splice(i,1);
   }else{
-    player.build.group.attach(pa.group);pa.group.position.copy(pa.spot.pos);pa.group.rotation.set(0,0,0);pa.parked=true;setPlaneGearVisual(pa,true);
+    if(P.returning)return;
+    P.returning=true;P.phase='uavreturn';mouseDownFire=false;
+    flashPrompt((msg||'UAV recalled')+' — autopilot returning to ship.');return;
   }
   piloting=null;fpv=false;mouseDownFire=false;camPitch.v=.04;
   flashPrompt((msg||'UAV link ended')+' — captain safely back aboard.');updateMode();
+}
+function dockUAV(){
+  const P=piloting,pa=P&&P.plane;if(!pa)return;
+  player.build.group.attach(pa.group);pa.group.position.copy(pa.spot.pos);pa.group.rotation.set(0,0,0);pa.parked=true;setPlaneGearVisual(pa,true);
+  piloting=null;fpv=false;mouseDownFire=false;camPitch.v=.04;flashPrompt('UAV recovered — captain safely back aboard.');updateMode();
 }
 function startDrive(){
   driving=true; camYaw.v=player.heading||0; camPitch.v=0.05;
@@ -4523,6 +4530,14 @@ function updatePilot(dt){
     spinProp(pa,dt);
     if(P.pos.y>deckY+18){ P.phase='fly';camPitch.v=0.12;setPlaneGearVisual(pa,false);flashPrompt('Airborne — you have control.'); updateMode(); }
     return;
+  }
+  if(P.phase==='uavreturn'){
+    const target=player.build.group.localToWorld(P.plane.spot.pos.clone()).setY(deckY+8);
+    const to=target.clone().sub(P.pos),dist=to.length(),dir=to.normalize();
+    P.speed=Math.min(110,Math.max(42,P.speed+(110-P.speed)*dt*1.3));P.pos.addScaledVector(dir,Math.min(dist,P.speed*dt));
+    const yaw=Math.atan2(dir.x,dir.z);camYaw.v=yaw;P.lastYaw=yaw;P.roll=THREE.MathUtils.lerp(P.roll,0,dt*3);
+    pa.group.position.copy(P.pos);pa.group.quaternion.setFromEuler(new THREE.Euler(0,yaw,P.roll,'YXZ'));spinProp(pa,dt);
+    if(dist<3){dockUAV();return;} return;
   }
   // ---------- LANDING: descend; safe only OVER the ship, else ditch ----------
   if(P.phase==='landing'){
@@ -5906,9 +5921,12 @@ function updateCamera(){
   } else if(piloting){
     const P=piloting,pa=P.plane,def=pa.def,yaw=camYaw.v,pitch=Math.max(-1.1,Math.min(1.1,camPitch.v));
     const dir=new THREE.Vector3(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));
-    if(def.uav){ // direct camera feed: no cockpit and no exterior drone blocking the optics
-      const eye=P.pos.clone().addScaledVector(dir,.48).add(new THREE.Vector3(0,.08,0));
+    if(def.uav&&fpv){ // nose-mounted direct camera feed, beyond the small fuselage
+      const eye=P.pos.clone().addScaledVector(dir,3.2).add(new THREE.Vector3(0,.12,0));
       camera.position.copy(eye);camera.lookAt(eye.clone().add(dir.multiplyScalar(90)));
+    } else if(def.uav){ // chase camera when T switches out of the live feed
+      const want=P.pos.clone().addScaledVector(dir,-8).add(new THREE.Vector3(0,3.2,0));
+      camera.position.lerp(want,.35);camera.lookAt(P.pos.clone().addScaledVector(dir,24));
     } else if(fpv){ // seated in the actual cockpit (uses the airframe's own transform so you don't clip the fuselage)
       const heavy=def.shape==='heavyprop'||def.shape==='heavyjet';
       const off=def.heli?new THREE.Vector3(0,def.flyingFortress ? .55 : .35,def.flyingFortress?2.0:1.2):
