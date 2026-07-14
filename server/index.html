@@ -844,12 +844,12 @@ function sfxClick(){ if(!SFX.on||!SFX.ctx||!_voice(0.08)) return; const ctx=SFX.
   const g=ctx.createGain(); g.gain.setValueAtTime(0.08,t0); g.gain.exponentialRampToValueAtTime(0.001,t0+0.07); o.connect(g); g.connect(SFX.master); o.start(); o.stop(t0+0.08); }
 function sfxEngine(){   // called each frame — picks the right continuous layer for what you're driving/flying
   if(!SFX.ctx||!SFX.gain) return;
-  let rumble=0,rf=50, wind=0,wf=900, whine=0,whf=400, rotorNoise=0,rotorTone=0,rtf=58,rlf=11;
+  let rumble=0,rf=50, wind=0,wf=900, whine=0,whf=400, rotorNoise=0,rlf=11;
   if(phase==='play'){
     if(piloting){
       const def=piloting.plane.def, sp=Math.abs(piloting.speed||0), on=piloting.engineOn;
       if(def.heli){
-        rotorNoise=on?0.035:0.008; rotorTone=on?0.105:0.018; rlf=(8.5+sp*0.045)*6; rtf=52+sp*0.22;
+        rotorNoise=on?0.035:0.008; rlf=(8.5+sp*0.045)*6;
         wind=0.004+sp*0.00012; wf=520+sp*3; rumble=on?0.018:0.005; rf=48+sp*0.2;
       } else if(def.shape==='jet'||def.jet){
         wind=(on?0.018:0.01)+sp*0.00025; wf=850+sp*5;
@@ -867,8 +867,10 @@ function sfxEngine(){   // called each frame — picks the right continuous laye
   _ramp(SFX.windGain.gain, wind); _ramp(SFX.windFilt.frequency, wf);
   _ramp(SFX.whineGain.gain, whine); _ramp(SFX.whineOsc.frequency, whf);
   _ramp(SFX.rotorGain.gain, rotorNoise*0.55); _ramp(SFX.rotorDepth.gain, rotorNoise*0.45);
-  _ramp(SFX.rotorToneGain.gain, rotorTone*0.56); _ramp(SFX.rotorToneDepth.gain, rotorTone*0.44);
-  _ramp(SFX.rotorToneOsc.frequency, rtf); _ramp(SFX.rotorLFO.frequency, rlf);
+  // The tonal rotor layer sounded like an electronic whirr. Keep only filtered
+  // rotor noise and its blade pulse, which reads as air and physical blades.
+  _ramp(SFX.rotorToneGain.gain, 0); _ramp(SFX.rotorToneDepth.gain, 0);
+  _ramp(SFX.rotorLFO.frequency, rlf);
 }
 
 // =====================================================================
