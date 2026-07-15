@@ -565,7 +565,7 @@ function animateWater(t){
 // =====================================================================
 //  GRAPHICS PACK — filmic sky (sun disc, stars, clouds), wakes, foam, shockwaves
 // =====================================================================
-let skyGroup=null, sunSprite=null, starPts=null, cloudSprites=[], _foamRings=null;
+let skyGroup=null, sunSprite=null, starPts=null, cloudSprites=[], _foamRings=null, rainGroup=null, rainAttr=null, rainDrops=[];
 const wakes=[]; let wakeGeo=null, ringGeo=null;
 function softTex(size,inner,outer,hardCore){   // radial-gradient canvas texture (glow blobs, foam, sun)
   const c=document.createElement('canvas'); c.width=c.height=size; const g=c.getContext('2d');
@@ -612,7 +612,11 @@ function initGraphics(){
     sp.scale.set(900+Math.random()*1500, 260+Math.random()*260, 1);
     sp.userData.vx=4+Math.random()*7; skyGroup.add(sp); cloudSprites.push(sp);
   }
+  const n=110,a=new Float32Array(n*6);rainDrops=[];
+  for(let i=0;i<n;i++){const d={x:(Math.random()-.5)*150,z:(Math.random()-.5)*150,y:Math.random()*95};rainDrops.push(d);const k=i*6;a[k]=d.x;a[k+1]=d.y;a[k+2]=d.z;a[k+3]=d.x-1.5;a[k+4]=d.y-11;a[k+5]=d.z+.5;}
+  const rg=new THREE.BufferGeometry();rainAttr=new THREE.BufferAttribute(a,3);rg.setAttribute('position',rainAttr);rainGroup=new THREE.LineSegments(rg,new THREE.LineBasicMaterial({color:0xbfdcff,transparent:true,opacity:.48,depthWrite:false}));rainGroup.visible=false;scene.add(rainGroup);
 }
+function updateStormRain(dt){if(!rainGroup||!camera)return;const storm=weather.type==='storm';rainGroup.visible=storm;if(!storm)return;rainGroup.position.set(camera.position.x,0,camera.position.z);const a=rainAttr.array;for(let i=0;i<rainDrops.length;i++){const d=rainDrops[i];d.y-=dt*(95+Math.random()*45);if(d.y<-8){d.y=78+Math.random()*35;d.x=(Math.random()-.5)*150;d.z=(Math.random()-.5)*150;}const k=i*6;a[k]=d.x;a[k+1]=d.y;a[k+2]=d.z;a[k+3]=d.x-1.5;a[k+4]=d.y-11;a[k+5]=d.z+.5;}rainAttr.needsUpdate=true;}
 function spawnWake(x,z,scale,op){
   let w=wakes.find(w=>w.life<=0);
   if(!w){ if(wakes.length>=130) return;
@@ -672,6 +676,7 @@ function updateGraphics(dt,t){
   if(hitFlashT>0){hitFlashT-=dt;if(hitFlashT<=0){const el=document.getElementById('hitmarker');if(el)el.classList.remove('on');}}
   skyGroup.position.set(player&&player.pos?player.pos.x:0, 0, player&&player.pos?player.pos.z:0);
   const day=weather.day!=null?weather.day:1, W=weather.type;
+  updateStormRain(dt);
   const dusk=Math.pow(Math.max(0,1-Math.abs(day-0.5)*2),3);
   // sun disc rides its true elevation; dims/vanishes in weather
   const elv=(-0.12+1.05*day)*0.9, az=Math.atan2(120,80);
@@ -697,7 +702,7 @@ function updateGraphics(dt,t){
       m.position.set(isl.pos.x,0.55,isl.pos.z); m.scale.set(rx*1.16,1,rz*1.16); m.rotation.y=isl.angle||0;
       scene.add(m); _foamRings.push(m); });
   }
-  if(_foamRings) for(let i=0;i<_foamRings.length;i++) _foamRings[i].material.opacity=0.13+0.07*Math.sin(t*1.4+i*1.7);
+  if(_foamRings) for(let i=0;i<_foamRings.length;i++) _foamRings[i].material.opacity=(0.13+0.07*Math.sin(t*1.4+i*1.7))*(W==='storm'?1.75:1);
   // ship wakes + spinning masthead radar: player + on-screen fleet
   const rspin=(b)=>{ if(b&&b.group&&b.group.userData.radarBar) b.group.userData.radarBar.rotation.y+=dt*2.4; };
   if(player&&player.def&&!player._convertedToAlly){ const sp=player.speed||0; shipWake(player,player.def,dt,sp); bowSpray(player,player.def,dt,Math.abs(sp)); damageSmoke(player,dt); rspin(player.build); }
@@ -716,7 +721,7 @@ function updateGraphics(dt,t){
 let weather={ tod:0.32, type:'clear', t:50, sea:1, day:1 };
 const _skyDay=new THREE.Color(0x9fb8cc), _skyNight=new THREE.Color(0x0a1622), _skyDusk=new THREE.Color(0xc77a4a);
 const _gray=new THREE.Color(0x39424c), _foggy=new THREE.Color(0x8a929a);
-const WTYPES={ clear:{dark:1,far:9000,sea:1}, overcast:{dark:0.82,far:5200,sea:1.4}, fog:{dark:0.72,far:1700,sea:1.1}, storm:{dark:0.55,far:2300,sea:2.4} };
+const WTYPES={ clear:{dark:1,far:9000,sea:1}, overcast:{dark:0.78,far:4700,sea:1.55}, fog:{dark:0.68,far:1250,sea:1.2}, storm:{dark:0.42,far:1450,sea:3.25} };
 function weatherVis(){ const w=WTYPES[weather.type]||WTYPES.clear; return Math.max(0.4, w.dark) * (0.55+0.45*weather.day); }   // sensor/visibility multiplier
 function updateWeather(dt){
   const lock=window._MAP&&window._MAP.weatherLock;       // themed theaters hold their weather & time of day
