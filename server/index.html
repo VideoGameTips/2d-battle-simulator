@@ -117,6 +117,10 @@
   #over p{color:#9fb6cc;margin-bottom:22px;}
   #over button{padding:12px 28px;font-size:15px;letter-spacing:2px;background:#1d4d6e;border:1px solid #5fd0ff;
     color:#eaf6ff;border-radius:8px;cursor:pointer;}
+  #settings{position:fixed;z-index:26;top:50%;left:50%;transform:translate(-50%,-50%);display:none;width:min(390px,92vw);padding:18px;border:1px solid #42627c;border-radius:10px;background:rgba(8,17,27,.97);box-shadow:0 12px 55px #000;}
+  #settings h2{font-size:17px;letter-spacing:2px;color:#9fd8ff;margin-bottom:5px;}#settings p{font-size:12px;color:#8ea3b7;line-height:1.45;margin-bottom:12px;}
+  #settingsList{display:flex;flex-direction:column;gap:7px}.setitem{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border:1px solid #21384e;border-radius:7px;background:#0d1925;color:#d9e8f5;font-size:13px;cursor:pointer}.setitem b{color:#7fd0a0;font-size:11px;letter-spacing:1px}.setitem.off b{color:#ff9b88;}
+  .dmgnum{position:fixed;z-index:12;pointer-events:none;font:bold 16px ui-monospace,monospace;color:#ffe08a;text-shadow:0 2px 3px #000;transition:opacity .12s;}
 </style>
 </head>
 <body>
@@ -181,6 +185,7 @@
   <div class="hint">No slot limit: every structure has a huge physical footprint and needs clear ground. Face the build location, then click. Press <b>B</b> to close.</div>
   <div id="buildList"></div>
 </div>
+<div id="settings"><h2>⚙ SETTINGS</h2><p>Visual combat feedback is optional. Press <b>K</b> to close.</p><div id="settingsList"></div></div>
 
 <!-- END -->
 <div id="over">
@@ -2260,12 +2265,25 @@ const fx=[];
 const wrecks=[];
 const MAX_WRECKS=7;
 let cameraShake=0,cameraShakePhase=0,hitFlashT=0;
+let settingsOpen=false;
+const gameSettings={combatFeedback:true,damageNumbers:false,cameraShake:true};
+const damageNumbers=[];
+function loadGameSettings(){try{const s=JSON.parse(localStorage.getItem('ironTideSettings'));if(s&&typeof s==='object')Object.assign(gameSettings,s);}catch(e){}}
+function saveGameSettings(){try{localStorage.setItem('ironTideSettings',JSON.stringify(gameSettings));}catch(e){}}
+function refreshSettings(){const list=document.getElementById('settingsList');if(!list)return;list.innerHTML='';const rows=[['combatFeedback','Hit marker & kill feed'],['damageNumbers','Floating damage numbers'],['cameraShake','Camera shake']];rows.forEach(([key,label])=>{const d=document.createElement('button');d.className='setitem'+(gameSettings[key]?'':' off');d.innerHTML='<span>'+label+'</span><b>'+ (gameSettings[key]?'ON':'OFF')+'</b>';d.onclick=()=>{gameSettings[key]=!gameSettings[key];saveGameSettings();refreshSettings();if(!gameSettings.damageNumbers)clearDamageNumbers();};list.appendChild(d);});}
+function toggleSettings(){if(phase!=='play')return;settingsOpen=!settingsOpen;document.getElementById('settings').style.display=settingsOpen?'block':'none';if(settingsOpen){mouseDownFire=false;if(document.pointerLockElement)document.exitPointerLock();refreshSettings();}}
+function clearDamageNumbers(){while(damageNumbers.length){const d=damageNumbers.pop();d.el.remove();}}
+function showDamageNumber(pos,dmg,friendly=true){if(!gameSettings.damageNumbers||!camera||damageNumbers.length>=14||!pos)return;const el=document.createElement('div');el.className='dmgnum';el.textContent='-'+Math.max(1,Math.round(dmg));el.style.color=friendly?'#ffe08a':'#ff8f82';document.body.appendChild(el);damageNumbers.push({el,pos:pos.clone().add(new THREE.Vector3((Math.random()-.5)*1.5,2+Math.random()*1.2,(Math.random()-.5)*1.5)),life:.85});}
+function updateDamageNumbers(dt){for(let i=damageNumbers.length-1;i>=0;i--){const d=damageNumbers[i];d.life-=dt;d.pos.y+=dt*2.5;const p=d.pos.clone().project(camera);if(d.life<=0||p.z<-1||p.z>1){d.el.remove();damageNumbers.splice(i,1);continue;}d.el.style.left=(p.x*.5+.5)*innerWidth+'px';d.el.style.top=(-p.y*.5+.5)*innerHeight+'px';d.el.style.opacity=Math.min(1,d.life/.2).toFixed(2);}}
+loadGameSettings();
 function addCameraShake(pos,power=1){
+  if(!gameSettings.cameraShake)return;
   if(!camera||!pos)return;
   const d=camera.position.distanceTo(pos), reach=110+power*48;
   if(d<reach) cameraShake=Math.min(1.35,Math.max(cameraShake,power*(1-d/reach)));
 }
 function showHit(target,kill=false){
+  if(!gameSettings.combatFeedback)return;
   hitFlashT=Math.max(hitFlashT,kill ? .22 : .11);
   const el=document.getElementById('hitmarker');if(el)el.classList.add('on');
   if(target){const feed=document.getElementById('killfeed');if(feed){const line=document.createElement('div');line.className='killline'+(kill?' enemy':'');
@@ -2727,6 +2745,7 @@ addEventListener('keydown',e=>{
   if(e.code==='KeyQ') cycleGun();                        // Q cycles your owned small arms while ashore
   if(e.code==='KeyX') deleteTurret();                    // X scraps the deck gun you're standing next to
   if(e.code==='KeyI'&&!e.repeat) cycleGfxQuality();       // I cycles bloom/AO quality (a perf safety valve)
+  if(e.code==='KeyK'&&!e.repeat) toggleSettings();
   if(e.code==='KeyO'&&!e.repeat) fleetOrderCmd();         // O cycles a fleet order (attack / capture / regroup)
   if(e.code==='KeyT'){ fpv=!fpv;   // T toggles first-person / cockpit view (V is taken by mines)
     if(piloting||drivingTank||manning||driving) flashPrompt(driving?(fpv?'External chase view':'Bridge view'):(fpv?'First-person view':'Chase view')); } });
@@ -4966,7 +4985,7 @@ function fireFx(s,dt){   // ship blaze — scales with hull size and fire intens
 }
 function damageTarget(t,dmg,owner,hitPos){
   if(t===player){ player.hp-=dmg; damageCompartment(player,dmg,hitPos); applyCrit(player,dmg); if(player.hp<=0){ player.hp=0; playerSunk(); } updateHUD(); return; }
-  t.hp-=dmg; damageCompartment(t,dmg,hitPos); applyCrit(t,dmg); if(t.hp<=0 && t.sinkT===0){ t.hp=0; t.sinkT=0.001; spawnSalvage(t.pos.clone());
+  showDamageNumber(hitPos||t.pos,dmg,owner===null||!owner||owner.team!==1);t.hp-=dmg; damageCompartment(t,dmg,hitPos); applyCrit(t,dmg); if(t.hp<=0 && t.sinkT===0){ t.hp=0; t.sinkT=0.001; spawnSalvage(t.pos.clone());
     if(owner===null||!owner||owner.team!==1)showHit(t.def.name||'ENEMY SHIP',true);
     const bounty=t.def.boss?30000:t.def.hp>400?700:t.def.hp>250?500:350;
     sunk++;warRecord('sunk');money+=bounty;if(t.def.boss){warRecord('bosses');flashPrompt('⚓ ENEMY LEVIATHAN DESTROYED — $30,000 BOUNTY');}
@@ -5101,6 +5120,7 @@ function update(dt,t){
   updateComms(dt);
   _distressT-=dt; if(_distressT<=0){ _distressT=4; checkDistress(); }
   updateCamera();
+  updateDamageNumbers(dt);
   updateAircraftAimAssist(dt);
 }
 
@@ -6193,7 +6213,9 @@ function loop(){
   requestAnimationFrame(loop);
   const rawDt=clock.getDelta(),dt=Math.min(0.05,rawDt); t2+=dt;
   updateAdaptiveQuality(rawDt);
-  if(phase==='play'){ update(dt,t2); updateHUD(); }
+  // Menus are planning time: pause the live simulation while a panel has focus.
+  const panelOpen=shopOpen||harborOpen||buildOpen||tacticalOpen||settingsOpen;
+  if(phase==='play'&&!panelOpen){ update(dt,t2); updateHUD(); }
   if(composer && gfxQuality>0){
     if(aoPass && aoPass.enabled){
       aoPass.uniforms.cameraNear.value=camera.near; aoPass.uniforms.cameraFar.value=camera.far;
