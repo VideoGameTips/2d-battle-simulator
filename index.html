@@ -809,6 +809,12 @@ const _skyDay=new THREE.Color(0x9fb8cc), _skyNight=new THREE.Color(0x0a1622), _s
 const _gray=new THREE.Color(0x39424c), _foggy=new THREE.Color(0x8a929a);
 const WTYPES={ clear:{dark:1,far:9000,sea:1}, overcast:{dark:0.78,far:4700,sea:1.55}, fog:{dark:0.68,far:1250,sea:1.2}, storm:{dark:0.42,far:1450,sea:3.25} };
 function weatherVis(){ const w=WTYPES[weather.type]||WTYPES.clear; return Math.max(0.4, w.dark) * (0.55+0.45*weather.day); }   // sensor/visibility multiplier
+function weatherForce(){ return weather.type==='storm'?1:weather.type==='overcast'?0.35:weather.type==='fog'?0.18:0; }
+function weatherWind(speed=1){
+  const k=weatherForce(); if(!k) return new THREE.Vector3();
+  const a=0.85+Math.sin((typeof t2==='number'?t2:0)*0.075)*0.45+Math.sin((typeof t2==='number'?t2:0)*0.21)*0.12;
+  return new THREE.Vector3(Math.sin(a),0,Math.cos(a)).multiplyScalar(k*speed);
+}
 function updateWeather(dt){
   const lock=window._MAP&&window._MAP.weatherLock;       // themed theaters hold their weather & time of day
   if(lock){ weather.type=window._MAP.weather; if(window._MAP.tod!=null) weather.tod=window._MAP.tod; }
@@ -4771,15 +4777,17 @@ function updatePilot(dt){
   // ---------- HELI FLY: hover — throttle = forward, mouse pitch = climb/descend ----------
   if(def.heli){
     planeEngine(P, def, dt);
+    const storm=weatherForce();
     const pr=P.parts, rH=1-(pr.rotor/3), heH=1-((pr.engL>=0?pr.engL:0)/3), tCtl=1-(pr.tail/3)*0.7;
-    if(keys['KeyA']) camYaw.v+=def.turn*tCtl*dt; if(keys['KeyD']) camYaw.v-=def.turn*tCtl*dt;
+    if(keys['KeyA']) camYaw.v+=def.turn*tCtl*(1-storm*0.16)*dt; if(keys['KeyD']) camYaw.v-=def.turn*tCtl*(1-storm*0.16)*dt;
     if(pr.tail>=2) camYaw.v += (pr.tail-1)*0.9*dt;   // tail-rotor loss → the airframe spins
-    if(P.engineOn){ if(keys['KeyW']) P.speed=Math.min(def.maxSpeed,P.speed+30*dt);
+    if(P.engineOn){ if(keys['KeyW']) P.speed=Math.min(def.maxSpeed*(1-storm*0.12),P.speed+30*dt);
       else if(keys['KeyS']) P.speed=Math.max(-def.maxSpeed*0.3,P.speed-30*dt);
       else P.speed*=(1-Math.min(1,dt*0.9)); }              // ease into a hover when hands off
     else P.speed*=(1-Math.min(1,dt*0.5));
     const yaw=camYaw.v, pitch=Math.max(-1.0,Math.min(1.0,camPitch.v));
     P.pos.add(new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw)).multiplyScalar(P.speed*dt));
+    if(storm) P.pos.add(weatherWind((def.flyingFortress?1.0:1.9)*dt));
     if(P.engineOn){ P.pos.y += Math.sin(pitch)*(def.climb||18)*rH*heH*dt;            // rotor/engine damage = less lift
       if(pr.rotor>=1||pr.engL>=1) P.pos.y -= (pr.rotor+(pr.engL>=0?pr.engL:0))*1.6*dt; }   // sag from reduced lift
     else P.pos.y -= 17*dt;                                          // dead engine — autorotation descent
@@ -4802,20 +4810,21 @@ function updatePilot(dt){
   }
   // ---------- FLY: full control (component damage shapes the handling) ----------
   planeEngine(P, def, dt);
+  const storm=weatherForce(), mass=def.shape==='heavyprop'||def.shape==='heavyjet'||def.shape==='wing'?0.65:def.scale&&def.scale>1.4?0.75:1;
   const pr=P.parts;
   const eH=enginePartHealth(P);                 if(eH<=0.05) P.engineOn=false;     // engines shot out → dead stick
   const tailCtl=1-(pr.tail/3)*0.8, elevCtl=1-(pr.elev/3)*0.7, ailerCtl=1-(pr.ailer/3)*0.6;
   const wingDmg=(pr.wingL+pr.wingR)/6;                                              // 0..1 lift loss
   const asym=((pr.wingL-pr.wingR)+(pr.engR>=0?(pr.engL-pr.engR):0))*0.05;           // pull toward the damaged side
   const wingOff = pr.wingL>=3||pr.wingR>=3;
-  if(keys['KeyA']) camYaw.v+=def.turn*tailCtl*dt;                                   // rudder weakened by tail damage
-  if(keys['KeyD']) camYaw.v-=def.turn*tailCtl*dt;
+  if(keys['KeyA']) camYaw.v+=def.turn*tailCtl*(1-storm*0.18*mass)*dt;               // rudder weakened by tail damage and storm gusts
+  if(keys['KeyD']) camYaw.v-=def.turn*tailCtl*(1-storm*0.18*mass)*dt;
   camYaw.v += asym*dt;                                                              // asymmetric yaw pull
   if(pr.tail>=2) camYaw.v += Math.sin(t2*11)*0.7*(pr.tail-1)*dt;                    // unstable tail → wobble
   const pitch=Math.max(-1.1,Math.min(1.1,camPitch.v))*elevCtl, yaw=camYaw.v;        // elevators limit pitch authority
   const dir=new THREE.Vector3(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));
   if(P.engineOn){
-    const mx=planeMaxSpeed(P,def)*(0.45+0.55*eH);                                  // payload/fuel and engine health set available thrust
+    const mx=planeMaxSpeed(P,def)*(0.45+0.55*eH)*(1-storm*0.10*mass);              // payload/fuel, engine health and weather set available thrust
     if(keys['KeyW']) P.speed=Math.min(mx,P.speed+34*eH*dt);
     if(keys['KeyS']) P.speed=Math.max(def.speed*0.45,P.speed-34*dt);
     P.pos.add(dir.clone().multiplyScalar(P.speed*dt));
@@ -4825,6 +4834,7 @@ function updatePilot(dt){
     P.pos.x+=Math.sin(yaw)*P.speed*dt; P.pos.z+=Math.cos(yaw)*P.speed*dt;
     P.pos.y -= 28*dt + Math.max(0,-Math.sin(pitch))*P.speed*dt;
   }
+  if(storm) P.pos.add(weatherWind((2.25*mass)*(0.45+Math.max(0,1-P.pos.y/120))*dt));
   const yawRate=yaw-P.lastYaw; P.lastYaw=yaw;
   let rollT=Math.max(-0.9,Math.min(0.9,yawRate*22)) + asym*4;                       // forced roll toward the bad side
   if(wingOff){ rollT=(pr.wingL>=3?-1:1)*1.5; P.pos.y-=30*dt; }                      // torn wing → violent roll + falling
@@ -5523,14 +5533,16 @@ function updateDrive(dt){
   if(keys['KeyW']) player.throttle=Math.min(1,(player.throttle||0)+dt*0.5);
   else if(keys['KeyS']) player.throttle=Math.max(-0.4,(player.throttle||0)-dt*0.5);
   else player.throttle=(player.throttle||0)*Math.max(0,1-dt*1.2); // ease back to stop when hands off
-  const maxSpd = (def.boss?12 : def.kind==='scout'?34 : def.len>80?18 : 26) * engineFactor(player) * (player.submerged?0.6:1);  // engine crits + diving slow you
+  const storm=weatherForce();
+  const maxSpd = (def.boss?12 : def.kind==='scout'?34 : def.len>80?18 : 26) * engineFactor(player) * (player.submerged?0.6:1) * (1-storm*0.18);  // engine crits, diving and storms slow you
   player.speed=(player.throttle||0)*maxSpd;
-  const rudder = def.turn||(def.len>80?0.18:0.32);
+  const rudder = (def.turn||(def.len>80?0.18:0.32))*(1-storm*0.14);
   const eff=0.25+Math.min(1,Math.abs(player.throttle||0)); // hard to turn when stopped
   if(keys['KeyA']) player.heading+=rudder*eff*dt;
   if(keys['KeyD']) player.heading-=rudder*eff*dt;
   player.pos.x+=Math.sin(player.heading)*player.speed*dt;
   player.pos.z+=Math.cos(player.heading)*player.speed*dt;
+  if(storm && !player.submerged) player.pos.add(weatherWind(1.35*dt*(1-Math.min(0.75,Math.abs(player.throttle||0)*0.35))));
   const lim=4900; player.pos.x=Math.max(-lim,Math.min(lim,player.pos.x)); player.pos.z=Math.max(-lim,Math.min(lim,player.pos.z));
   keepOffIslands(player.pos, shipRadius(def)+8);
 }
@@ -5819,10 +5831,13 @@ function updateAIPlane(p,dt){
   desired+=p.jink;
   if(Math.hypot(p.pos.x,p.pos.z)>5200){ desired=Math.atan2(-p.pos.x,-p.pos.z); }
   let dh=desired-p.heading; while(dh>Math.PI)dh-=6.283; while(dh<-Math.PI)dh+=6.283;
-  const tr=(p.def.turn||1.4)*(p.state==='attack'?1:1.18);p.heading+=Math.max(-tr*dt,Math.min(tr*dt,dh));
+  const storm=weatherForce(), mass=p.def.shape==='heavyprop'||p.def.shape==='heavyjet'||p.def.shape==='wing'?0.65:p.def.scale&&p.def.scale>1.4?0.75:1;
+  const tr=(p.def.turn||1.4)*(p.state==='attack'?1:1.18)*(1-storm*0.14*mass);p.heading+=Math.max(-tr*dt,Math.min(tr*dt,dh));
   const sp=p.def.speed||(p.def.shape==='jet'?80:p.def.shape==='attack'?56:54);
-  p.pos.x+=Math.sin(p.heading)*sp*dt; p.pos.z+=Math.cos(p.heading)*sp*dt;
-  p.vel=new THREE.Vector3(Math.sin(p.heading)*sp,0,Math.cos(p.heading)*sp);
+  const effSp=sp*(1-storm*0.08*mass);
+  p.pos.x+=Math.sin(p.heading)*effSp*dt; p.pos.z+=Math.cos(p.heading)*effSp*dt;
+  if(storm) p.pos.add(weatherWind((1.7*mass)*(0.45+Math.max(0,1-p.pos.y/120))*dt));
+  p.vel=new THREE.Vector3(Math.sin(p.heading)*effSp,0,Math.cos(p.heading)*effSp);
   if(p.marker) p.marker.position.set(p.pos.x, p.pos.y+5.5, p.pos.z);
   p.pos.y += (targetY-p.pos.y)*Math.min(1,1.2*dt);
   const bank=Math.max(-0.8,Math.min(0.8,-dh*3));
