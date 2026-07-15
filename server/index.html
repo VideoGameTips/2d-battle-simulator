@@ -6213,9 +6213,7 @@ function loop(){
   requestAnimationFrame(loop);
   const rawDt=clock.getDelta(),dt=Math.min(0.05,rawDt); t2+=dt;
   updateAdaptiveQuality(rawDt);
-  // Menus are planning time: pause the live simulation while a panel has focus.
-  const panelOpen=shopOpen||harborOpen||buildOpen||tacticalOpen||settingsOpen;
-  if(phase==='play'&&!panelOpen){ update(dt,t2); updateHUD(); }
+  if(phase==='play'){ update(dt,t2); updateHUD(); }
   if(composer && gfxQuality>0){
     if(aoPass && aoPass.enabled){
       aoPass.uniforms.cameraNear.value=camera.near; aoPass.uniforms.cameraFar.value=camera.far;
