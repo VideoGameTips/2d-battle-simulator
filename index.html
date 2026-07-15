@@ -122,6 +122,10 @@
   #fatalError h2{margin-bottom:10px;color:#ff8a7e;letter-spacing:2px;font-size:20px;}#fatalError p{color:#aebfd0;font-size:13px;line-height:1.55;}
   #fatalError code{display:block;max-height:110px;overflow:auto;margin:13px 0;padding:9px;border-radius:6px;background:#0a1018;color:#ffd0c8;font:11px ui-monospace,monospace;white-space:pre-wrap;}
   #fatalError button{padding:9px 14px;border:1px solid #5fd0ff;border-radius:7px;background:#19435f;color:#eaf6ff;cursor:pointer;}
+  #settings{position:fixed;z-index:26;top:50%;left:50%;transform:translate(-50%,-50%);display:none;width:min(390px,92vw);padding:18px;border:1px solid #42627c;border-radius:10px;background:rgba(8,17,27,.97);box-shadow:0 12px 55px #000;}
+  #settings h2{font-size:17px;letter-spacing:2px;color:#9fd8ff;margin-bottom:5px;}#settings p{font-size:12px;color:#8ea3b7;line-height:1.45;margin-bottom:12px;}
+  #settingsList{display:flex;flex-direction:column;gap:7px}.setitem{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border:1px solid #21384e;border-radius:7px;background:#0d1925;color:#d9e8f5;font-size:13px;cursor:pointer}.setitem b{color:#7fd0a0;font-size:11px;letter-spacing:1px}.setitem.off b{color:#ff9b88;}
+  .dmgnum{position:fixed;z-index:12;pointer-events:none;font:bold 16px ui-monospace,monospace;color:#ffe08a;text-shadow:0 2px 3px #000;transition:opacity .12s;}
 </style>
 </head>
 <body>
@@ -186,6 +190,7 @@
   <div class="hint">No slot limit: every structure has a huge physical footprint and needs clear ground. Face the build location, then click. Press <b>B</b> to close.</div>
   <div id="buildList"></div>
 </div>
+<div id="settings"><h2>⚙ SETTINGS</h2><p>Visual combat feedback is optional. Press <b>K</b> to close.</p><div id="settingsList"></div></div>
 
 <!-- END -->
 <div id="over">
@@ -346,6 +351,13 @@ const PLANES = {
            desc:'A tiny expendable kamikaze drone — cheap, fast, and one-way. Scout with her, then dive into a target for a solid parting hit.' },
   microdrone:{ name:'Quadcopter Mini-Scout', cost:180, hp:8, speed:34, maxSpeed:62, turn:3.2, col:0x1c1e1a, shape:'jet', jet:true, scale:.14, fuel:32, uav:true, reconMul:2.2,
            desc:'A palm-sized commercial-style scout drone — dirt cheap and easy to lose, with just enough battery for a quick peek over the horizon.' },
+  attackquad:{ name:'Attack Quadcopter', cost:900, hp:26, speed:44, maxSpeed:82, turn:2.8, col:0x33382f, shape:'quad', jet:true, scale:.7, fuel:90, uav:true, reconMul:2.4,
+           guns:{dmg:5,spd:180,cd:0.1,kind:'gun',col:0xffd040}, bomb:{dmg:40,splash:5,kind:'missile',homing:true,spd:110,col:0xd0d6de,range:220}, bombs:3,
+           desc:'A four-rotor attack drone with a gimbal camera — hovers, scouts and drops guided munitions on anything below. Lose it and your remote pilot is back aboard, unharmed.' },
+  vtolscout:{ name:'VTOL Recon Drone', cost:1100, hp:28, speed:50, maxSpeed:104, turn:1.7, col:0x5b6a5a, shape:'vtol', jet:true, scale:.72, fuel:220, uav:true, reconMul:5.2,
+           desc:'A twin-prop VTOL scout with a big EO/IR sensor ball — long endurance and superb optics, second only to the Global Hawk for eyes on the enemy.' },
+  nukedrone:{ name:'Atomic Strike Drone', cost:9000, hp:22, speed:52, maxSpeed:96, turn:2.2, col:0x2a2c26, shape:'quad', jet:true, scale:.9, fuel:120, uav:true, reconMul:2.0, kamikazeDamage:9999, nuke:true, nukeRadius:250,
+           desc:'⚛ A one-way quadcopter slung with a tactical nuclear warhead. Fly it into the enemy fleet and dive — the blast flattens everything in a vast radius. Fantastically expensive, and utterly expendable.' },
   // ---- WWII prop ----
   p51:  { name:'P-51 Mustang', cost:950, hp:70,  speed:62, maxSpeed:108, turn:1.9, col:0xb9bec6, shape:'prop',
           guns:{dmg:8,spd:200,cd:0.06,kind:'gun',col:0xffe070}, desc:'Fast prop fighter — six .50 cals, superb dogfighter.' },
@@ -1955,6 +1967,35 @@ function buildPlane(def){
       const cowl=mkCyl(.45,.5,.35,SILVER(0x69727a),20);cowl.rotation.x=Math.PI/2;cowl.position.set(x,-.05,1.72);g.add(cowl);
       const prop=aircraftPropeller(1.33,def.contraProp?4:4,intakeMat,!!def.contraProp);prop.position.set(x,-.05,1.98);g.add(prop);g.userData.props.push(prop);}
     if(def.strategicBomb){const bomb=aircraftFuselage(3.5,.54,SILVER(0xd2d1c5));bomb.position.set(0,-.9,-.15);g.add(bomb);}
+  }else if(shape==='quad'){                       // quadcopter: X-frame, four lifting rotors, gimbal sensor ball
+    span=4.4;length=4.4;
+    const body=mkBox(1.15,.5,1.35,m);body.position.y=.05;g.add(body);
+    const topPlate=mkBox(.85,.12,.95,dark);topPlate.position.y=.34;g.add(topPlate);
+    const ballMat=new THREE.MeshStandardMaterial({color:0x12161a,metalness:.4,roughness:.32});
+    const ball=new THREE.Mesh(new THREE.SphereGeometry(.3,18,14),ballMat);ball.position.set(0,-.34,.42);g.add(ball);
+    const lens=new THREE.Mesh(new THREE.SphereGeometry(.14,14,12),glass);lens.position.set(0,-.42,.58);g.add(lens);
+    g.userData.props=[];const A=1.85;
+    for(const arm of [[1,1],[-1,1],[-1,-1],[1,-1]]){ const ax=arm[0],az=arm[1];
+      const boom=mkBox(.13,.11,A*1.05,dark);boom.position.set(ax*A*.36,.04,az*A*.36);boom.rotation.y=Math.atan2(ax,az);g.add(boom);
+      const motor=mkCyl(.13,.16,.3,dark,12);motor.position.set(ax*A*.66,.16,az*A*.66);g.add(motor);
+      const w=new THREE.Group();w.rotation.x=-Math.PI/2;w.position.set(ax*A*.66,.34,az*A*.66);
+      const prop=aircraftPropeller(.78,2,intakeMat);w.add(prop);g.add(w);g.userData.props.push(prop);
+      const leg=mkBox(.07,.55,.07,dark);leg.position.set(ax*.5,-.32,az*.4);g.add(leg); }
+    if(def.nuke){ const wh=aircraftFuselage(1.6,.36,SILVER(0xd7d2c4));wh.position.set(0,-.52,0);g.add(wh);   // slung tactical warhead
+      const band=mkCyl(.38,.38,.14,new THREE.MeshStandardMaterial({color:0xffcf2f,emissive:0xffcf2f,emissiveIntensity:.35}),16);band.rotation.x=Math.PI/2;band.position.set(0,-.52,.24);g.add(band); }
+  }else if(shape==='vtol'){                        // twin-prop VTOL scout with a big EO/IR sensor ball head
+    span=9.5;length=5.6;
+    const fus=aircraftFuselage(length,.42,m);g.add(fus);
+    const ballMat=new THREE.MeshStandardMaterial({color:0x12161a,metalness:.38,roughness:.34});
+    const ball=new THREE.Mesh(new THREE.SphereGeometry(.44,20,16),ballMat);ball.position.set(0,-.3,length*.33);g.add(ball);
+    const lens=new THREE.Mesh(new THREE.SphereGeometry(.2,16,12),glass);lens.position.set(0,-.46,length*.33+.18);g.add(lens);
+    aircraftWingSet(g,span,1.5,1.15,.12,.13,m,.05,.32);
+    g.userData.props=[];
+    for(const sx of[-1,1]){ const nac=aircraftFuselage(1.5,.26,dark);nac.position.set(sx*span*.28,.32,length*.12);g.add(nac);
+      const prop=aircraftPropeller(.98,3,intakeMat);prop.position.set(sx*span*.28,.32,length*.12+.95);g.add(prop);g.userData.props.push(prop);
+      const boom=aircraftFuselage(length*.9,.14,m);boom.position.set(sx*span*.28,.32,-length*.2);g.add(boom);
+      addFin(sx*span*.28,.34,-length*.42,1,.9,.4,.15); }
+    aircraftWingSet(g,span*.6,.7,.5,.05,.1,m,-length*.44,.32);
   }else{
     span=8.4;length=5.5;
     aircraftUnifiedAirframe(g,{span,length,fuselageWidth:.4,wingZ:.18,root:1.95,tip:.82,sweep:.25,
@@ -2374,12 +2415,25 @@ const fx=[];
 const wrecks=[];
 const MAX_WRECKS=7;
 let cameraShake=0,cameraShakePhase=0,hitFlashT=0;
+let settingsOpen=false;
+const gameSettings={combatFeedback:true,damageNumbers:false,cameraShake:true};
+const damageNumbers=[];
+function loadGameSettings(){try{const s=JSON.parse(localStorage.getItem('ironTideSettings'));if(s&&typeof s==='object')Object.assign(gameSettings,s);}catch(e){}}
+function saveGameSettings(){try{localStorage.setItem('ironTideSettings',JSON.stringify(gameSettings));}catch(e){}}
+function refreshSettings(){const list=document.getElementById('settingsList');if(!list)return;list.innerHTML='';const rows=[['combatFeedback','Hit marker & kill feed'],['damageNumbers','Floating damage numbers'],['cameraShake','Camera shake']];rows.forEach(([key,label])=>{const d=document.createElement('button');d.className='setitem'+(gameSettings[key]?'':' off');d.innerHTML='<span>'+label+'</span><b>'+ (gameSettings[key]?'ON':'OFF')+'</b>';d.onclick=()=>{gameSettings[key]=!gameSettings[key];saveGameSettings();refreshSettings();if(!gameSettings.damageNumbers)clearDamageNumbers();};list.appendChild(d);});}
+function toggleSettings(){if(phase!=='play')return;settingsOpen=!settingsOpen;document.getElementById('settings').style.display=settingsOpen?'block':'none';if(settingsOpen){mouseDownFire=false;if(document.pointerLockElement)document.exitPointerLock();refreshSettings();}}
+function clearDamageNumbers(){while(damageNumbers.length){const d=damageNumbers.pop();d.el.remove();}}
+function showDamageNumber(pos,dmg,friendly=true){if(!gameSettings.damageNumbers||!camera||damageNumbers.length>=14||!pos)return;const el=document.createElement('div');el.className='dmgnum';el.textContent='-'+Math.max(1,Math.round(dmg));el.style.color=friendly?'#ffe08a':'#ff8f82';document.body.appendChild(el);damageNumbers.push({el,pos:pos.clone().add(new THREE.Vector3((Math.random()-.5)*1.5,2+Math.random()*1.2,(Math.random()-.5)*1.5)),life:.85});}
+function updateDamageNumbers(dt){for(let i=damageNumbers.length-1;i>=0;i--){const d=damageNumbers[i];d.life-=dt;d.pos.y+=dt*2.5;const p=d.pos.clone().project(camera);if(d.life<=0||p.z<-1||p.z>1){d.el.remove();damageNumbers.splice(i,1);continue;}d.el.style.left=(p.x*.5+.5)*innerWidth+'px';d.el.style.top=(-p.y*.5+.5)*innerHeight+'px';d.el.style.opacity=Math.min(1,d.life/.2).toFixed(2);}}
+loadGameSettings();
 function addCameraShake(pos,power=1){
+  if(!gameSettings.cameraShake)return;
   if(!camera||!pos)return;
   const d=camera.position.distanceTo(pos), reach=110+power*48;
   if(d<reach) cameraShake=Math.min(1.35,Math.max(cameraShake,power*(1-d/reach)));
 }
 function showHit(target,kill=false){
+  if(!gameSettings.combatFeedback)return;
   hitFlashT=Math.max(hitFlashT,kill ? .22 : .11);
   const el=document.getElementById('hitmarker');if(el)el.classList.add('on');
   if(target){const feed=document.getElementById('killfeed');if(feed){const line=document.createElement('div');line.className='killline'+(kill?' enemy':'');
@@ -2851,6 +2905,7 @@ addEventListener('keydown',e=>{
   if(e.code==='KeyQ') cycleGun();                        // Q cycles your owned small arms while ashore
   if(e.code==='KeyX') deleteTurret();                    // X scraps the deck gun you're standing next to
   if(e.code==='KeyI'&&!e.repeat) cycleGfxQuality();       // I cycles bloom/AO quality (a perf safety valve)
+  if(e.code==='KeyK'&&!e.repeat) toggleSettings();
   if(e.code==='KeyO'&&!e.repeat) fleetOrderCmd();         // O cycles a fleet order (attack / capture / regroup)
   if(e.code==='KeyT'){ fpv=!fpv;   // T toggles first-person / cockpit view (V is taken by mines)
     if(piloting||drivingTank||manning||driving) flashPrompt(driving?(fpv?'External chase view':'Bridge view'):(fpv?'First-person view':'Chase view')); } });
@@ -4534,11 +4589,19 @@ function recoverPlane(){ // safe landing on the ship
   piloting=null; camPitch.v=0.04; flashPrompt('Recovered safely on deck.'); updateMode();
 }
 function playerKamikaze(P){ // ram an enemy ship / land unit / harbor by diving into it
-  const p=P.pos,kd=P.plane.def.kamikazeDamage||120;
-  for(const e of enemies){ if(e.sinkT>0)continue; if(p.y<14 && Math.hypot(p.x-e.pos.x,p.z-e.pos.z) < e.def.beam/2+4){ damageTarget(e,kd,null); crashPlane('Kamikaze run on the '+e.def.name+'!'); return true; } }
-  for(const u of landUnits){ if(u.team!==1||u.dead)continue; if(p.y<10 && Math.hypot(p.x-u.pos.x,p.z-u.pos.z) < 6){ u.hp-=kd; if(u.hp<=0) killLandUnit(u); crashPlane('Kamikaze!'); return true; } }
-  if(enemyHarbor && enemyHarbor.hp>0 && p.y<16 && Math.hypot(p.x-enemyHarbor.pos.x,p.z-enemyHarbor.pos.z)<enemyHarbor.r){ damageHarbor(enemyHarbor,kd*1.2); crashPlane('Kamikaze into the harbor!'); return true; }
-  return false;
+  const p=P.pos,def=P.plane.def,kd=def.kamikazeDamage||120;
+  const hitShip=enemies.find(e=>e.sinkT===0 && p.y<14 && Math.hypot(p.x-e.pos.x,p.z-e.pos.z) < e.def.beam/2+4);
+  const hitUnit=!hitShip && landUnits.find(u=>u.team===1 && !u.dead && p.y<10 && Math.hypot(p.x-u.pos.x,p.z-u.pos.z) < 6);
+  const hitHarbor=!hitShip && !hitUnit && enemyHarbor && enemyHarbor.hp>0 && p.y<16 && Math.hypot(p.x-enemyHarbor.pos.x,p.z-enemyHarbor.pos.z)<enemyHarbor.r;
+  if(!hitShip && !hitUnit && !hitHarbor) return false;
+  if(def.nuke){                                   // tactical nuclear payload — flattens the whole impact area (harbours spared, like the R-36M)
+    const bp=p.clone().setY(1.5);
+    returnFromUAV(true,'Nuclear strike drone expended');   // recall the pilot & remove the drone BEFORE the blast so it can't self-damage a live pilot
+    blastAll(bp, 9999, def.nukeRadius||250, true, true);
+    flashPrompt('☢ NUCLEAR STRIKE DRONE DETONATED'); return true; }
+  if(hitShip){ damageTarget(hitShip,kd,null); crashPlane('Kamikaze run on the '+hitShip.def.name+'!'); return true; }
+  if(hitUnit){ hitUnit.hp-=kd; if(hitUnit.hp<=0) killLandUnit(hitUnit); crashPlane('Kamikaze!'); return true; }
+  damageHarbor(enemyHarbor,kd*1.2); crashPlane('Kamikaze into the harbor!'); return true;
 }
 function planeMaxSpeed(P,def){
   if(def.fuelSpeed){const f=Math.max(0,Math.min(1,P.fuel/P.fuelMax));return (def.minFuelSpeed||def.speed)+(def.maxSpeed-(def.minFuelSpeed||def.speed))*(1-f);}
@@ -4604,7 +4667,8 @@ function hurtPlayerPlane(dmg){ // you, flying, took flak/cannon fire
   else flashPrompt('Hit! '+Math.max(0,Math.ceil(piloting.hp/piloting.maxhp*100))+'%'+partSummary(piloting));
 }
 function crashPlane(msg){ // destroyed (ocean ditch / hit the sea / kamikaze)
-  if(piloting&&piloting.plane.def.uav){ returnFromUAV(true,msg||'UAV destroyed'); return; }
+  if(!piloting||!piloting.plane) return;
+  if(piloting.plane.def.uav){ returnFromUAV(true,msg||'UAV destroyed'); return; }
   const pa=piloting.plane;
   blastAll(piloting.pos.clone().setY(1.5), 40, 13); splashAt(piloting.pos.clone().setY(0.5),2.5);
   destroyObject3D(pa.group); pa.spot.taken=false;
@@ -5121,7 +5185,7 @@ function calledShot(s,dmg,hitPos,friendly){
 }
 function damageTarget(t,dmg,owner,hitPos){
   if(t===player){ player.hp-=dmg; damageCompartment(player,dmg,hitPos); applyCrit(player,dmg); calledShot(player,dmg,hitPos,false); if(player.hp<=0){ player.hp=0; playerSunk(); } updateHUD(); return; }
-  t.hp-=dmg; damageCompartment(t,dmg,hitPos); applyCrit(t,dmg); calledShot(t,dmg,hitPos,(owner===null||!owner||owner.team!==1)); if(t.hp<=0 && t.sinkT===0){ t.hp=0; t.sinkT=0.001; spawnSalvage(t.pos.clone());
+  showDamageNumber(hitPos||t.pos,dmg,owner===null||!owner||owner.team!==1);t.hp-=dmg; damageCompartment(t,dmg,hitPos); applyCrit(t,dmg); calledShot(t,dmg,hitPos,(owner===null||!owner||owner.team!==1)); if(t.hp<=0 && t.sinkT===0){ t.hp=0; t.sinkT=0.001; spawnSalvage(t.pos.clone());
     if(owner===null||!owner||owner.team!==1)showHit(t.def.name||'ENEMY SHIP',true);
     const bounty=t.def.boss?30000:t.def.hp>400?700:t.def.hp>250?500:350;
     sunk++;warRecord('sunk');money+=bounty;if(t.def.boss){warRecord('bosses');flashPrompt('⚓ ENEMY LEVIATHAN DESTROYED — $30,000 BOUNTY');}
@@ -5257,6 +5321,7 @@ function update(dt,t){
   updateComms(dt);
   _distressT-=dt; if(_distressT<=0){ _distressT=4; checkDistress(); }
   updateCamera();
+  updateDamageNumbers(dt);
   updateAircraftAimAssist(dt);
 }
 
