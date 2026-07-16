@@ -4120,6 +4120,7 @@ function updateAlly(a,dt){
   const turnRate=a.def.boss ? 0.24 : a.def.len>70?0.45:0.8; a.heading+=Math.max(-turnRate*dt,Math.min(turnRate*dt,dh));
   const sp=(a.def.boss?6.5:a.def.kind==='scout'?15:a.def.len>70?9:13)*engineFactor(a); a.pos.x+=Math.sin(a.heading)*sp*dt; a.pos.z+=Math.cos(a.heading)*sp*dt;
   a.vel=new THREE.Vector3(Math.sin(a.heading)*sp,0,Math.cos(a.heading)*sp);
+  groundingDamage(a,dt,'ally');
   keepOffIslands(a.pos, shipRadius(a.def)+8);
   if(a.build){ const sea=(typeof weather==='object'&&weather.sea)?weather.sea:1;
     let dH=a.heading-(a._ph!=null?a._ph:a.heading); a._ph=a.heading; while(dH>Math.PI)dH-=6.283; while(dH<-Math.PI)dH+=6.283;
@@ -5539,6 +5540,7 @@ function updateDrive(dt){
   player.pos.x+=Math.sin(player.heading)*player.speed*dt;
   player.pos.z+=Math.cos(player.heading)*player.speed*dt;
   if(storm && !player.submerged) player.pos.add(weatherWind(1.35*dt*(1-Math.min(0.75,Math.abs(player.throttle||0)*0.35))));
+  groundingDamage(player,dt,'player');
   const lim=4900; player.pos.x=Math.max(-lim,Math.min(lim,player.pos.x)); player.pos.z=Math.max(-lim,Math.min(lim,player.pos.z));
   keepOffIslands(player.pos, shipRadius(def)+8);
 }
@@ -5591,6 +5593,7 @@ function updateEnemy(e,dt){
   const sp=(e.def.boss?6.5:e.def.kind==='scout'?15:e.def.len>70?9:13)*engineFactor(e)*docSp;
   e.pos.x+=Math.sin(e.heading)*sp*dt; e.pos.z+=Math.cos(e.heading)*sp*dt;
   e.vel=new THREE.Vector3(Math.sin(e.heading)*sp,0,Math.cos(e.heading)*sp);
+  groundingDamage(e,dt,'enemy');
   keepOffIslands(e.pos, shipRadius(e.def)+8);
   if(e.build){ const sea=(typeof weather==='object'&&weather.sea)?weather.sea:1;
     let dH=e.heading-(e._ph!=null?e._ph:e.heading); e._ph=e.heading; while(dH>Math.PI)dH-=6.283; while(dH<-Math.PI)dH+=6.283;
@@ -5681,6 +5684,30 @@ function keepOffIslands(pos,margin){ // push a ship out of any island / harbor f
   const obs=islands.slice(); if(enemyHarbor) obs.push({pos:enemyHarbor.pos,r:enemyHarbor.r}); if(friendlyHarbor) obs.push({pos:friendlyHarbor.pos,r:friendlyHarbor.r});
   obs.forEach(o=>{ const q=islandLocal(pos,o),rx=(o.rx||o.r)+margin,rz=(o.rz||o.r)+margin,n=Math.hypot(q.x/rx,q.z/rz);
     if(n<1){ const x=n>0.001?q.x/n:rx,z=n>0.001?q.z/n:0,p=islandWorld(o,x,z); pos.x=p.x; pos.z=p.z; } });
+}
+function groundingInfo(ship){
+  if(!ship||!ship.pos||!ship.def)return null;
+  const margin=Math.max(6,shipRadius(ship.def)*0.78), speed=ship.vel?ship.vel.length():Math.abs(ship.speed||0);
+  let best=null;
+  for(const o of islands){
+    const q=islandLocal(ship.pos,o),rx=(o.rx||o.r)+margin,rz=(o.rz||o.r)+margin,n=Math.hypot(q.x/rx,q.z/rz);
+    if(n<1 && (!best||n<best.n)) best={island:o,n,overlap:1-n,speed};
+  }
+  return best;
+}
+function groundingDamage(ship,dt,kind){
+  const g=groundingInfo(ship); if(!g) return false;
+  ship._groundCd=(ship._groundCd||0)-dt;
+  if(ship._groundCd<=0){
+    ship._groundCd=0.55;
+    const dmg=Math.min(42,8+g.overlap*70+g.speed*1.3);
+    const hit=ship.pos.clone().setY(0.6);
+    if(kind==='player'){ damageTarget(player,dmg,null,hit); if(Math.random()<0.35)flashPrompt('⚠ HULL GROUNDING — back off the shoreline!'); }
+    else if(kind==='ally') damageAlly(ship,dmg,hit);
+    else damageTarget(ship,dmg,null,hit);
+    if(Math.random()<0.5) splashAt(hit,0.8+Math.min(1.2,g.overlap*2));
+  }
+  return true;
 }
 function steerClearOfIslands(pos,def,desired){
   // Start the turn before a hull reaches the beach. This prevents AI ships
