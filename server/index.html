@@ -418,13 +418,14 @@ function surfaceMap(kind='metal'){
   if(kind==='concrete'){x.strokeStyle='rgba(65,62,55,.18)';for(let i=0;i<8;i++){let px=Math.random()*s,py=Math.random()*s;x.beginPath();x.moveTo(px,py);
     for(let j=0;j<4;j++){px+=(Math.random()-.5)*18;py+=5+Math.random()*10;x.lineTo(px,py);}x.stroke();}}
   const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(kind==='ground'?5:kind==='concrete'?3:2,kind==='ground'?5:kind==='concrete'?3:2);
+  t.magFilter=THREE.NearestFilter; t.minFilter=THREE.NearestMipMapNearestFilter||THREE.NearestFilter;
   _surfaceMaps[kind]=t;return t;
 }
 function surfaceMaterial(color,kind='metal',roughness=.55,metalness=0){
-  return new THREE.MeshStandardMaterial({color,map:surfaceMap(kind),roughness,metalness});
+  return new THREE.MeshStandardMaterial({color,map:surfaceMap(kind),roughness,metalness,flatShading:true});
 }
-const SILVER = c=>surfaceMaterial(c||0xc2c6cc,'metal',0.42,0.72);
-const PAINT  = c=>surfaceMaterial(c||0x6a6a4a,'paint',0.86,0.04);   // matte painted steel (tanks, painted hull/plane bodies) — no chrome sheen
+const SILVER = c=>surfaceMaterial(c||0xaeb5bc,'metal',0.62,0.38);
+const PAINT  = c=>surfaceMaterial(c||0x6a6a4a,'paint',0.9,0.02);   // matte block-steel: readable Roblox-like military plastic/metal
 function mkBox(w,h,d,m){ const x=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), m.isMaterial?m:SILVER(m)); x.castShadow=x.receiveShadow=true; return x; }
 function mkCyl(rt,rb,h,m,seg=14){ const x=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg), m.isMaterial?m:SILVER(m)); x.castShadow=true; return x; }
 
@@ -433,7 +434,7 @@ function initThree(){
   renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:true});
   renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(1.5,devicePixelRatio));
   renderer.shadowMap.enabled=false;   // shadows were rendering ~20k meshes twice — huge cost
-  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.86;   // darker filmic exposure: less toy-bright, more naval steel
+  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.98;   // semi-pixel/Roblox style: readable, not photoreal-dark
   if(THREE.sRGBEncoding) renderer.outputEncoding=THREE.sRGBEncoding;
   scene=new THREE.Scene();
   scene.background=new THREE.Color(0x9fb8cc);
@@ -441,8 +442,8 @@ function initThree(){
   camera=new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 20000);
   scene.add(camera);   // so the first-person weapon viewmodel (parented to the camera) renders
   clock=new THREE.Clock();
-  hemi=new THREE.HemisphereLight(0xb7c9d8, 0x26313d, 0.62); scene.add(hemi);
-  sun=new THREE.DirectionalLight(0xfff1d8, 1.52); sun.position.set(120,180,80);
+  hemi=new THREE.HemisphereLight(0xc8d6e2, 0x344252, 0.78); scene.add(hemi);
+  sun=new THREE.DirectionalLight(0xfff0d8, 1.25); sun.position.set(120,180,80);
   scene.add(sun); scene.add(sun.target);
   // ocean — normal-mapped shimmer (procedural texture, scrolled each frame)
   waterGeo=new THREE.PlaneGeometry(18000,18000,48,48);
@@ -1362,6 +1363,7 @@ function buildHarbor(team,pos){
 }
 // historical tank types — just stat + dimension tweaks on a shared chassis
 const TANKS = {
+  prototype:{ name:'Prototype', cost:0, hp:320, dmg:42, fireRate:0.9, speed:24, turn:1.9, range:175, col:0x65766d, hullW:3.1, hullL:4.9, hullH:1.05, turW:2.45, turL:2.55, barL:3.6, barR:0.17, sloped:true, prototype:true },
   sherman: { name:'M4 Sherman', cost:520, hp:220, dmg:30, fireRate:1.0, speed:19, turn:1.5, range:150, col:0x55613a, hullW:2.6, hullL:4.0, hullH:1.1, turW:2.0, turL:2.2, barL:3.0, barR:0.16 },
   t34:     { name:'T-34',       cost:540, hp:210, dmg:32, fireRate:1.0, speed:23, turn:1.8, range:150, col:0x46583a, hullW:2.7, hullL:4.2, hullH:0.95,turW:2.0, turL:2.0, barL:3.0, barR:0.15, sloped:true },
   panzer4: { name:'Panzer IV',  cost:500, hp:200, dmg:28, fireRate:1.0, speed:18, turn:1.5, range:150, col:0x6a6a52, hullW:2.6, hullL:4.1, hullH:1.05,turW:2.0, turL:2.2, barL:3.1, barR:0.15 },
@@ -1425,6 +1427,14 @@ function buildLand(kind,team,pos,type){
     for(const sx of [-1,1]){ const tr=mkBox(0.7,0.9,T.hullL*1.05,trackM); tr.position.set(sx*(T.hullW/2),0.55,0); g.add(tr);
       for(let i=0;i<4;i++){ const w=mkCyl(0.34,0.34,0.32,SILVER(0x16180f),8); w.rotation.z=Math.PI/2; w.position.set(sx*(T.hullW/2),0.45,(i-1.5)*(T.hullL*0.24)); g.add(w); } }
     if(T.sloped){ const gl=mkBox(T.hullW*0.9,0.75,1.2,body); gl.position.set(0,0.95,T.hullL*0.44); gl.rotation.x=-0.6; g.add(gl); }
+    if(T.prototype){
+      const plateM=surfaceMaterial(0x25302c,'paint',.94,.04),trimM=surfaceMaterial(0x9fb7a6,'paint',.9,.02);
+      for(const sx of[-1,1]){
+        const skirt=mkBox(.24,.58,T.hullL*.92,plateM); skirt.position.set(sx*(T.hullW/2+.38),.82,0); g.add(skirt);
+        const cheek=mkBox(.5,.58,1.0,plateM); cheek.position.set(sx*(T.hullW*.33),1.42,T.hullL*.33); cheek.rotation.x=-.22; g.add(cheek);
+      }
+      const nose=mkBox(T.hullW*.7,.22,.65,trimM); nose.position.set(0,1.25,T.hullL*.52); nose.rotation.x=-.35; g.add(nose);
+    }
     const tur=new THREE.Group(); tur.position.y=0.6+T.hullH+0.2; g.add(tur); g.userData.turret=tur;
     const dome=mkBox(T.turW,0.9,T.turL,body); tur.add(dome);
     const mant=mkBox(0.7,0.6,0.5,SILVER(0x44483a)); mant.position.z=T.turL/2; tur.add(mant);
@@ -1435,6 +1445,12 @@ function buildLand(kind,team,pos,type){
     const cup=mkCyl(0.34,0.36,0.32,body,10); cup.position.set(-T.turW*0.22,0.55,-T.turL*0.18); tur.add(cup);
     const hatch=mkCyl(0.3,0.3,0.06,SILVER(0x33372a),10); hatch.position.set(-T.turW*0.22,0.74,-T.turL*0.18); tur.add(hatch);
     const mg=mkCyl(0.05,0.05,0.9,SILVER(0x2a2e22)); mg.rotation.x=Math.PI/2; mg.position.set(T.turW*0.28,0.42,T.turL*0.3); tur.add(mg);
+    if(T.prototype){
+      const trimM=surfaceMaterial(0x9fb7a6,'paint',.9,.02),darkM=surfaceMaterial(0x14191a,'metal',.82,.25);
+      const sight=mkBox(.42,.34,.42,darkM); sight.position.set(T.turW*.34,.55,T.turL*.18); tur.add(sight);
+      const stripe=mkBox(T.turW*.82,.06,.12,trimM); stripe.position.set(0,.48,-T.turL*.52); tur.add(stripe);
+      for(const x of[-.45,0,.45]){ const rack=mkBox(.08,.46,.95,darkM); rack.position.set(x,.66,-T.turL*.55); tur.add(rack); }
+    }
     for(const sx of [-1,1]){ const fend=mkBox(0.55,0.08,T.hullL*1.02,SILVER(0x2a2e22)); fend.position.set(sx*(T.hullW/2+0.18),1.02,0); g.add(fend); }
     const exh=mkCyl(0.1,0.1,0.7,SILVER(0x222)); exh.rotation.z=Math.PI/2; exh.position.set(T.hullW*0.4,0.95,-T.hullL*0.48); g.add(exh);
     const ant=mkCyl(0.02,0.02,1.6,SILVER(0x111)); ant.position.set(-T.turW*0.35,0.9,-T.turL*0.3); tur.add(ant);
@@ -2506,7 +2522,7 @@ const HARBOR_UP = {
 function hU(team,k){ const h=team===0?friendlyHarbor:enemyHarbor; return h?(h.up[k]||0):0; }   // upgrade level for either harbor
 function fU(k){ return hU(0,k); }                                          // current level of a friendly upgrade
 function upgCost(k){ const u=HARBOR_UP[k]; return Math.round(u.cost*Math.pow(u.mul, fU(k))); }
-function priceOf(cost){ return Math.max(1, Math.round(cost*(1 - 0.10*fU('discount')))); }   // discount applied to player buys
+function priceOf(cost){ return cost<=0?0:Math.max(1, Math.round(cost*(1 - 0.10*fU('discount')))); }   // discount applied to player buys
 const _radar=[0,0];                                                       // island radar-station count per team
 function controlledIslandCount(team){ return islands.reduce((n,i)=>n+(i.capturable&&i.owner===team?1:0),0); }
 // ===== WAR PACING — escalating enemy offensives, rotating bonus objectives, deck rearm =====
