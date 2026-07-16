@@ -1163,15 +1163,9 @@ function addShipGraphicDetails(g,def,L,B,deckY,enemy){
     glow.rotation.x=Math.PI/2;glow.position.set(0,deckY+9.5,L*.02);g.add(glow);
   }
   addNavalHardware(g,def,L,B,deckY,enemy);
-  // Two translucent, attached wake ribbons; no particles and only two extra meshes per ship.
-  const wakes=[];for(const sx of[-1,1]){const w=new THREE.Mesh(new THREE.PlaneGeometry(Math.max(2,B*.75),Math.max(12,L*.85)),
-      new THREE.MeshBasicMaterial({color:0xd9f5ff,transparent:true,opacity:.14,depthWrite:false,side:THREE.DoubleSide}));
-    w.rotation.x=-Math.PI/2;w.position.set(sx*B*.38,.12,-L-L*.42);g.add(w);wakes.push(w);}
-  g.userData.wakes=wakes;
 }
 function setShipWake(build,speed){
-  if(!build||!build.group.userData.wakes)return;const op=Math.min(.32,.035+Math.abs(speed||0)*.012);
-  build.group.userData.wakes.forEach(w=>w.material.opacity=op);
+  if(!build||!build.group)return;
   if(build.group.userData.radarBar)build.group.userData.radarBar.rotation.y+=.025;
 }
 function buildShip(def, enemy){
@@ -4752,6 +4746,8 @@ function updatePilot(dt){
     return;
   }
   if(P.phase==='uavreturn'){
+    planeEngine(P, def, dt);
+    if(P.fuel<=0){ returnFromUAV(true,'UAV battery depleted before recovery'); return; }
     const target=player.build.group.localToWorld(P.plane.spot.pos.clone()).setY(deckY+8);
     const to=target.clone().sub(P.pos),dist=to.length(),dir=to.normalize();
     P.speed=Math.min(110,Math.max(42,P.speed+(110-P.speed)*dt*1.3));P.pos.addScaledVector(dir,Math.min(dist,P.speed*dt));
