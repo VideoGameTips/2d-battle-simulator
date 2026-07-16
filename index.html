@@ -916,7 +916,65 @@ function sfxInit(){
 }
 function _ramp(param,v){ param.setTargetAtTime(v, SFX.ctx.currentTime, 0.15); }
 function sfxResume(){ sfxInit(); if(SFX.ctx && SFX.ctx.state==='suspended') SFX.ctx.resume(); }
-function sfxToggle(){ SFX.on=!SFX.on; if(SFX.master) SFX.master.gain.value=SFX.on?0.5:0; if(typeof flashPrompt==='function') flashPrompt('🔊 Sound '+(SFX.on?'ON':'OFF')); }
+function sfxToggle(){ SFX.on=!SFX.on; if(SFX.master) SFX.master.gain.value=SFX.on?0.5:0;
+  if(MUSIC.gain) MUSIC.gain.gain.setTargetAtTime((SFX.on&&MUSIC.on)?MUSIC.level:0, SFX.ctx.currentTime, 0.2);
+  if(typeof flashPrompt==='function') flashPrompt('🔊 Sound '+(SFX.on?'ON':'OFF')); }
+function musicToggle(){ MUSIC.on=!MUSIC.on;
+  if(MUSIC.gain) MUSIC.gain.gain.setTargetAtTime((SFX.on&&MUSIC.on)?MUSIC.level:0, SFX.ctx.currentTime, 0.25);
+  if(typeof flashPrompt==='function') flashPrompt('🎵 Music '+(MUSIC.on?'ON':'OFF')); }
+// ===== MUSIC — a fully-synthesized, slowly-evolving naval score (no audio files) =====
+const MUSIC={ctx:null,gain:null,on:true,playing:false,level:0.16,nextTime:0,bar:0,timer:null,
+  // A natural-minor "heroic lament": Am – F – C – G, looping with variation. [root MIDI, chord type]
+  prog:[[57,'min'],[53,'maj'],[48,'maj'],[55,'maj']],
+  scale:[57,59,60,62,64,65,67,69,71,72,74,76]};   // A-minor scale across two octaves (for the melody)
+const _mtof=m=>440*Math.pow(2,(m-69)/12);
+function _mvoice(freq,t0,dur,opt){   // one synth note → MUSIC.gain
+  const ctx=MUSIC.ctx; if(!ctx) return; opt=opt||{};
+  const o=ctx.createOscillator(); o.type=opt.type||'triangle'; o.frequency.value=freq; if(opt.detune)o.detune.value=opt.detune;
+  const g=ctx.createGain(), peak=opt.gain||0.2, atk=opt.attack||0.4, rel=opt.release||0.8;
+  g.gain.setValueAtTime(0,t0); g.gain.linearRampToValueAtTime(peak,t0+atk);
+  g.gain.setTargetAtTime(0.0001,t0+Math.max(atk,dur-rel),rel*0.5);
+  let node=o;
+  if(opt.cutoff){ const f=ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=opt.cutoff; f.Q.value=opt.q||0.6; o.connect(f); node=f; }
+  node.connect(g); g.connect(MUSIC.gain);
+  o.start(t0); o.stop(t0+dur+rel);
+}
+function _scheduleBar(t0){
+  const chord=MUSIC.prog[MUSIC.bar%MUSIC.prog.length], root=chord[0], ints=chord[1]==='min'?[0,3,7]:[0,4,7];
+  const barDur=3.4, phrase=Math.floor(MUSIC.bar/MUSIC.prog.length);
+  // sustained pad — the chord, one octave up, gently detuned for warmth
+  ints.forEach((iv,i)=>{ _mvoice(_mtof(root+12+iv), t0, barDur, {type:'triangle', gain:0.075, attack:0.9, release:1.6, detune:(i-1)*4, cutoff:1400, q:0.5}); });
+  // soft low pulse on the root — a heartbeat of momentum (two per bar)
+  for(const off of [0, barDur*0.5]) _mvoice(_mtof(root-12), t0+off, 0.9, {type:'sine', gain:0.16, attack:0.02, release:0.6, cutoff:420});
+  // sub bass drone
+  _mvoice(_mtof(root-24), t0, barDur, {type:'sine', gain:0.1, attack:0.6, release:1.2, cutoff:200});
+  // sparse solemn melody — a few chord/scale notes over most bars, resting sometimes
+  if((MUSIC.bar%4)!==3 && Math.random()<0.82){
+    const notes=1+Math.floor(Math.random()*3), start=Math.random()<0.5?0:barDur*0.5;
+    for(let n=0;n<notes;n++){ const deg=MUSIC.scale[3+Math.floor(Math.random()*(MUSIC.scale.length-3))];
+      const nt=t0+start+n*(barDur*0.5/notes)*(0.7+Math.random()*0.6);
+      _mvoice(_mtof(deg+12), nt, 0.7, {type:'sine', gain:0.06+Math.random()*0.03, attack:0.05, release:0.55, cutoff:2600}); }
+  }
+  MUSIC.bar++;
+}
+function _musicSched(){
+  const ctx=MUSIC.ctx; if(!ctx||!MUSIC.playing) return;
+  while(MUSIC.nextTime < ctx.currentTime+0.6){ _scheduleBar(MUSIC.nextTime); MUSIC.nextTime+=3.4; }
+}
+function musicStart(){
+  if(!SFX.ctx || MUSIC.playing) return;
+  MUSIC.ctx=SFX.ctx;
+  if(!MUSIC.gain){ MUSIC.gain=MUSIC.ctx.createGain(); MUSIC.gain.gain.value=(SFX.on&&MUSIC.on)?MUSIC.level:0; MUSIC.gain.connect(MUSIC.ctx.destination); }
+  MUSIC.playing=true; MUSIC.nextTime=MUSIC.ctx.currentTime+0.15;
+  MUSIC.timer=setInterval(_musicSched, 200);
+}
+function musicStop(){ MUSIC.playing=false; if(MUSIC.timer){ clearInterval(MUSIC.timer); MUSIC.timer=null; } }
+function playVictoryMusic(){   // swell the score from the top on a win
+  if(!SFX.ctx){ sfxInit(); if(SFX.ctx&&SFX.ctx.state==='suspended')SFX.ctx.resume(); }
+  if(!SFX.ctx) return;
+  musicStop(); MUSIC.bar=0; musicStart();
+  if(MUSIC.gain) MUSIC.gain.gain.setTargetAtTime((SFX.on&&MUSIC.on)?MUSIC.level:0, SFX.ctx.currentTime, 0.3);
+}
 function _dg(pos,maxD){ if(!pos||!camera) return 1; const d=camera.position.distanceTo(pos); return d>maxD?0:1-d/maxD; }
 function _voice(t){ if(SFX.voices>14) return false; SFX.voices++; setTimeout(()=>{SFX.voices=Math.max(0,SFX.voices-1);}, t*1000); return true; }
 function _noise(dur){ const s=SFX.ctx.createBufferSource(); s.buffer=SFX.noiseBuf; return s; }   // reuses the shared buffer
@@ -2935,6 +2993,7 @@ addEventListener('keydown',e=>{
   keys[e.code]=1; if(e.code==='Tab'){ e.preventDefault(); toggleShop(); } if(e.code==='Space') e.preventDefault();
   if(e.code==='KeyF') tryPlace(); if(e.code==='KeyE') toggleMan(); if(e.code==='KeyG'){ if(drivingTank) tankLandToggle(); else toggleFoot(); }
   if(e.code==='KeyH') toggleHarbor(); if(e.code==='KeyM') sfxToggle(); if(e.code==='KeyC') toggleDive();
+  if(e.code==='KeyJ'&&!e.repeat) musicToggle();   // J toggles the background music independently of sound FX
   if(e.code==='KeyB') toggleBuild();
   if(e.code==='KeyN'&&!e.repeat) toggleTacticalMap();
   if(e.code==='KeyP'&&!e.repeat) bailoutOrBoard();
@@ -6497,6 +6556,7 @@ function updateMode(){
 // =====================================================================
 function endGame(win,msg){
   if(phase==='over')return; phase='over';
+  if(win) playVictoryMusic();                       // the naval score swells up on a victory
   const oldRank=careerRank();
   warRecord(win?'wins':'losses');
   const r=careerRank(), nx=nextRank();
