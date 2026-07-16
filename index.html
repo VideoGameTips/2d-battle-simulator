@@ -505,22 +505,23 @@ function initThree(){
   renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();showFatalError('WebGL context was lost. This can happen when the browser runs out of graphics memory.');});
   renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(1.5,devicePixelRatio));
   renderer.shadowMap.enabled=false;   // shadows were rendering ~20k meshes twice — huge cost
-  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.0;   // neutral exposure; ship paint is tuned locally below
+  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.86;   // darker filmic exposure: less toy-bright, more naval steel
+  if(THREE.sRGBEncoding) renderer.outputEncoding=THREE.sRGBEncoding;
   scene=new THREE.Scene();
   scene.background=new THREE.Color(0x9fb8cc);
   scene.fog=new THREE.Fog(0x9fb8cc, 900, 9000);
   camera=new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 20000);
   scene.add(camera);   // so the first-person weapon viewmodel (parented to the camera) renders
   clock=new THREE.Clock();
-  hemi=new THREE.HemisphereLight(0xcfe2f5, 0x33414f, 0.9); scene.add(hemi);
-  sun=new THREE.DirectionalLight(0xfff4e0, 1.15); sun.position.set(120,180,80);
+  hemi=new THREE.HemisphereLight(0xb7c9d8, 0x26313d, 0.62); scene.add(hemi);
+  sun=new THREE.DirectionalLight(0xfff1d8, 1.52); sun.position.set(120,180,80);
   scene.add(sun); scene.add(sun.target);
   // ocean — normal-mapped shimmer (procedural texture, scrolled each frame)
   waterGeo=new THREE.PlaneGeometry(18000,18000,48,48);
   waterGeo.rotateX(-Math.PI/2);
   const wn=makeWaterNormals();
-  water=new THREE.Mesh(waterGeo, new THREE.MeshStandardMaterial({color:0x16465f, metalness:0.3, roughness:0.42, transparent:true, opacity:0.96,
-    normalMap:wn, normalScale:new THREE.Vector2(0.45,0.45)}));
+  water=new THREE.Mesh(waterGeo, new THREE.MeshStandardMaterial({color:0x0f3548, metalness:0.18, roughness:0.56, transparent:true, opacity:0.97,
+    normalMap:wn, normalScale:new THREE.Vector2(0.38,0.38)}));
   water.receiveShadow=true; scene.add(water);
   initGraphics();   // sky pack: sun disc, stars, clouds, wake pool
   initPostFX();     // bloom + contact-shadow AO (falls back to a plain render if it fails to init)
@@ -1168,6 +1169,33 @@ function setShipWake(build,speed){
   if(!build||!build.group)return;
   if(build.group.userData.radarBar)build.group.userData.radarBar.rotation.y+=.025;
 }
+function addShipWeathering(g,def,L,B,deckY,enemy){
+  const dark=new THREE.MeshBasicMaterial({color:0x101417,transparent:true,opacity:.34,depthWrite:false});
+  const rust=new THREE.MeshBasicMaterial({color:enemy?0x5a261e:0x5b3824,transparent:true,opacity:.46,depthWrite:false});
+  const seam=new THREE.MeshBasicMaterial({color:0x0b0e10,transparent:true,opacity:.38,depthWrite:false});
+  const len=L*1.55, sideY=Math.max(0.18,deckY-(def.depth||4)*0.45);
+  for(const sx of[-1,1]){
+    const wl=mkBox(.045,.12,len,rust);wl.position.set(sx*(B+.055),.18,0);g.add(wl);
+    const ports=Math.min(12,Math.max(4,Math.floor(def.len/9)));
+    for(let i=0;i<ports;i++){
+      const z=-L*.68+i*(L*1.36/Math.max(1,ports-1)), p=mkBox(.05,.16,.38,dark);
+      p.position.set(sx*(B+.065),sideY+.55,z);g.add(p);
+    }
+    const streaks=Math.min(7,Math.max(3,Math.floor(def.len/16)));
+    for(let i=0;i<streaks;i++){
+      const z=-L*.72+i*(L*1.45/Math.max(1,streaks-1)), h=.7+((i*37)%9)*.08, r=mkBox(.052,h,.22,rust);
+      r.position.set(sx*(B+.07),sideY+.05-h*.35,z);g.add(r);
+    }
+  }
+  const seams=Math.min(9,Math.max(3,Math.floor(def.len/12)));
+  for(let i=1;i<seams;i++){
+    const z=-L*.76+i*(L*1.52/seams), s=mkBox(Math.max(1.8,B*1.45),.035,.055,seam);
+    s.position.set(0,deckY+.61,z);g.add(s);
+  }
+  if(def.kind==='carrier'){
+    for(const x of[-B*.38,0,B*.38]){const lane=mkBox(.05,.04,L*1.55,seam);lane.position.set(x,deckY+.64,0);g.add(lane);}
+  }
+}
 function buildShip(def, enemy){
   const g=new THREE.Group();
   const L=def.len/2, B=def.beam/2, deckY=def.deckY, col = enemy?0x596067:0x77818a;
@@ -1260,6 +1288,7 @@ function buildShip(def, enemy){
       mounts.push(new THREE.Vector3(x, deckY+0.15, z));
     }
   }
+  addShipWeathering(g,def,L,B,deckY,enemy);
   addShipGraphicDetails(g,def,L,B,deckY,enemy);
   scene.add(g);
   return { group:g, mounts, deckY:def.deckY, halfLen:L, halfBeam:B, def };
