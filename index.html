@@ -340,6 +340,9 @@ const PLANES = {
            guns:{dmg:8,spd:200,cd:0.05,kind:'gun',col:0xffd040}, bomb:{dmg:42,splash:5,kind:'missile',homing:true,spd:135,col:0x3a4036,range:240}, bombs:10, desc:'Attack helo — hover, chain gun + homing rockets.' },
   cobra: { name:'AH-1 Cobra',   cost:1300, hp:80,  speed:0, maxSpeed:74, turn:2.7, climb:22, col:0x44503a, shape:'heli', heli:true,
            guns:{dmg:6,spd:195,cd:0.045,kind:'gun',col:0xffd040}, bomb:{dmg:32,splash:5,kind:'bomb',col:0x4a4e3a}, bombs:7, desc:'Light fast gunship. Nimble in the hover.' },
+  mi24:{ name:'Mi-24 Hind', cost:2200, hp:170, speed:0, maxSpeed:82, turn:1.75, climb:18, col:0x4b5942, shape:'heli', heli:true, scale:1.18, marketOnly:true,
+           guns:{dmg:10,spd:205,cd:0.055,kind:'gun',col:0xffd040}, bomb:{dmg:44,splash:6,kind:'missile',homing:true,spd:132,col:0x4b4f3e,range:250}, bombs:14,
+           desc:'Marketplace blueprint. Soviet flying infantry-fighting-vehicle: tougher than a Cobra, cheaper than a fortress helicopter.' },
   uav:   { name:'RQ-7 Scout UAV', cost:450, hp:24, speed:58, maxSpeed:118, turn:2.45, col:0x657b78, shape:'jet', jet:true, scale:.42, fuel:95, uav:true,
            desc:'Unarmed first-person reconnaissance drone. Reveals enemy contacts at long range; losing it returns you safely to your ship.' },
   mq9:   { name:'MQ-9 Reaper', cost:1400, hp:34, speed:52, maxSpeed:96, turn:2.0, col:0x454e46, shape:'jet', jet:true, scale:.5, fuel:150, uav:true, reconMul:3.2,
@@ -356,6 +359,9 @@ const PLANES = {
            desc:'A four-rotor attack drone with a gimbal camera — hovers, scouts and drops guided munitions on anything below. Lose it and your remote pilot is back aboard, unharmed.' },
   vtolscout:{ name:'VTOL Recon Drone', cost:1100, hp:28, speed:50, maxSpeed:104, turn:1.7, col:0x5b6a5a, shape:'vtol', jet:true, scale:.72, fuel:220, uav:true, reconMul:5.2,
            desc:'A twin-prop VTOL scout with a big EO/IR sensor ball — long endurance and superb optics, second only to the Global Hawk for eyes on the enemy.' },
+  bayraktar:{ name:'Bayraktar TB2', cost:1250, hp:22, speed:46, maxSpeed:78, turn:1.75, col:0xc1c8c5, shape:'jet', jet:true, scale:.46, fuel:180, uav:true, reconMul:3.6, marketOnly:true,
+           bomb:{dmg:50,splash:5,kind:'missile',homing:true,spd:112,col:0xd0d6de,range:240}, bombs:4,
+           desc:'Marketplace blueprint. Cheap long-endurance strike drone: fragile, slow, but excellent at finding and picking off targets.' },
   nukedrone:{ name:'Atomic Strike Drone', cost:9000, hp:1, speed:52, maxSpeed:96, turn:2.2, col:0x2a2c26, shape:'quad', jet:true, scale:.9, fuel:120, uav:true, reconMul:2.0, kamikazeDamage:9999, nuke:true, nukeRadius:250,
            desc:'⚛ A one-way quadcopter slung with a tactical nuclear warhead. Fly it into the enemy fleet and dive — the blast flattens everything in a vast radius. Fantastically expensive, and utterly expendable.' },
   // ---- WWII prop ----
@@ -506,22 +512,22 @@ function initThree(){
   renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();showFatalError('WebGL context was lost. This can happen when the browser runs out of graphics memory.');});
   renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(1.5,devicePixelRatio));
   renderer.shadowMap.enabled=false;   // shadows were rendering ~20k meshes twice — huge cost
-  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.98;   // semi-pixel/Roblox style: readable, not photoreal-dark
+  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.82;   // darker semi-pixel military grade: less washed-out ships/planes
   if(THREE.sRGBEncoding) renderer.outputEncoding=THREE.sRGBEncoding;
   scene=new THREE.Scene();
-  scene.background=new THREE.Color(0x9fb8cc);
-  scene.fog=new THREE.Fog(0x9fb8cc, 900, 9000);
+  scene.background=new THREE.Color(0x7f96a8);
+  scene.fog=new THREE.Fog(0x7f96a8, 900, 9000);
   camera=new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 20000);
   scene.add(camera);   // so the first-person weapon viewmodel (parented to the camera) renders
   clock=new THREE.Clock();
-  hemi=new THREE.HemisphereLight(0xc8d6e2, 0x344252, 0.78); scene.add(hemi);
-  sun=new THREE.DirectionalLight(0xfff0d8, 1.25); sun.position.set(120,180,80);
+  hemi=new THREE.HemisphereLight(0xb2c3d0, 0x293440, 0.58); scene.add(hemi);
+  sun=new THREE.DirectionalLight(0xf2dfc4, 0.86); sun.position.set(120,180,80);
   scene.add(sun); scene.add(sun.target);
   // ocean — normal-mapped shimmer (procedural texture, scrolled each frame)
   waterGeo=new THREE.PlaneGeometry(18000,18000,48,48);
   waterGeo.rotateX(-Math.PI/2);
   const wn=makeWaterNormals();
-  water=new THREE.Mesh(waterGeo, new THREE.MeshStandardMaterial({color:0x0f3548, metalness:0.18, roughness:0.56, transparent:true, opacity:0.97,
+  water=new THREE.Mesh(waterGeo, new THREE.MeshStandardMaterial({color:0x092637, metalness:0.16, roughness:0.68, transparent:true, opacity:0.98,
     normalMap:wn, normalScale:new THREE.Vector2(0.38,0.38)}));
   water.receiveShadow=true; scene.add(water);
   initGraphics();   // sky pack: sun disc, stars, clouds, wake pool
@@ -807,9 +813,9 @@ function updateGraphics(dt,t){
 //  WEATHER & DAY/NIGHT — procedural sky, sun, fog, sea state
 // =====================================================================
 let weather={ tod:0.32, type:'clear', t:50, sea:1, day:1 };
-const _skyDay=new THREE.Color(0x9fb8cc), _skyNight=new THREE.Color(0x0a1622), _skyDusk=new THREE.Color(0xc77a4a);
-const _gray=new THREE.Color(0x39424c), _foggy=new THREE.Color(0x8a929a);
-const WTYPES={ clear:{dark:1,far:9000,sea:1}, overcast:{dark:0.78,far:4700,sea:1.55}, fog:{dark:0.68,far:1250,sea:1.2}, storm:{dark:0.42,far:1450,sea:3.25} };
+const _skyDay=new THREE.Color(0x7f96a8), _skyNight=new THREE.Color(0x07111b), _skyDusk=new THREE.Color(0x9e603a);
+const _gray=new THREE.Color(0x2c333b), _foggy=new THREE.Color(0x747c84);
+const WTYPES={ clear:{dark:0.86,far:9000,sea:1}, overcast:{dark:0.66,far:4700,sea:1.55}, fog:{dark:0.58,far:1250,sea:1.2}, storm:{dark:0.34,far:1450,sea:3.25} };
 function weatherVis(){ const w=WTYPES[weather.type]||WTYPES.clear; return Math.max(0.4, w.dark) * (0.55+0.45*weather.day); }   // sensor/visibility multiplier
 function weatherForce(){ return weather.type==='storm'?1:weather.type==='overcast'?0.35:weather.type==='fog'?0.18:0; }
 function weatherWind(speed=1){
@@ -835,12 +841,13 @@ function updateWeather(dt){
   const sky=_skyNight.clone().lerp(_skyDay, day);
   sky.lerp(_skyDusk, dusk*0.5);
   if(weather.type==='storm') sky.lerp(_gray,0.55); else if(weather.type==='fog') sky.lerp(_foggy,0.5); else if(weather.type==='overcast') sky.lerp(_gray,0.3);
+  sky.multiplyScalar(0.9);
   scene.background.copy(sky); scene.fog.color.copy(sky);
   scene.fog.far = W.far*(0.45+0.55*day); scene.fog.near = Math.min(800, scene.fog.far*0.25);
   // lights
   const bright=day*W.dark;
-  if(sun){ sun.intensity=0.28+0.95*bright; sun.color.setRGB(1, 0.92-dusk*0.25, 0.85-dusk*0.45); }   // original levels — ACES alone needs no boost
-  if(hemi) hemi.intensity=0.32+0.6*Math.max(bright,day*0.4);   // keep night moody but still playable
+  if(sun){ sun.intensity=0.2+0.7*bright; sun.color.setRGB(0.95, 0.86-dusk*0.22, 0.74-dusk*0.35); }
+  if(hemi) hemi.intensity=0.24+0.42*Math.max(bright,day*0.35);   // keep night moody but still playable
 }
 // ===== LIGHTNING — storms occasionally hurl a bolt; tall metal ships are the tallest thing on the sea =====
 let lightningT=10;
@@ -943,7 +950,33 @@ const MUSIC_PROFILES={
   'The Landing':{level:.24,barDur:4.8,prog:[[50,'min'],[53,'maj'],[55,'maj'],[57,'min']],scale:[50,52,53,55,57,58,60,62,64,65,67,69],drone:.13,pad:.026,pulse:.13,shimmer:.12,melody:.08,perc:'march',cutoff:760},
   'Coastal Skirmish':{level:.22,barDur:4.25,prog:[[57,'min'],[55,'maj'],[53,'maj'],[52,'min']],scale:[52,53,55,57,59,60,62,64,65,67,69,71],drone:.1,pad:.025,pulse:.12,shimmer:.18,melody:.2,perc:'skirmish',cutoff:900},
   'Southhaven Shoals':{level:.23,barDur:5.2,prog:[[53,'maj'],[57,'min'],[60,'maj'],[55,'maj']],scale:[53,55,57,59,60,62,64,65,67,69,71,72],drone:.11,pad:.04,pulse:.095,shimmer:.36,melody:.38,perc:'heroic',cutoff:1150},
-  'The Broken Reef':{level:.23,barDur:4.9,prog:[[56,'min'],[52,'min'],[51,'maj'],[55,'maj']],scale:[51,52,54,56,57,59,60,63,64,66,68,69],drone:.14,pad:.024,pulse:.1,shimmer:.16,melody:.12,perc:'reef',cutoff:680}
+  'The Broken Reef':{level:.23,barDur:4.9,prog:[[56,'min'],[52,'min'],[51,'maj'],[55,'maj']],scale:[51,52,54,56,57,59,60,63,64,66,68,69],drone:.14,pad:.024,pulse:.1,shimmer:.16,melody:.12,perc:'reef',cutoff:680},
+  'Iron Straits':{level:.25,barDur:4.55,prog:[[50,'min'],[49,'min'],[53,'maj'],[48,'maj']],scale:[48,50,51,53,55,56,58,60,62,63,65,67],drone:.17,pad:.022,pulse:.16,shimmer:.1,melody:.08,perc:'storm',cutoff:620},
+  'Nightfall Passage':{level:.21,barDur:6.2,prog:[[45,'min'],[48,'maj'],[43,'min'],[47,'maj']],scale:[43,45,47,48,50,52,53,55,57,59,60,62],drone:.16,pad:.026,pulse:.055,shimmer:.2,melody:.06,perc:'stealth',cutoff:520},
+  'Fogbound Marches':{level:.22,barDur:6.7,prog:[[46,'min'],[44,'min'],[49,'maj'],[43,'min']],scale:[43,44,46,48,49,51,53,55,56,58,60,61],drone:.18,pad:.018,pulse:.045,shimmer:.12,melody:.04,perc:'fog',cutoff:430},
+  "Leviathan's Grave":{level:.25,barDur:6.0,prog:[[38,'min'],[41,'min'],[36,'min'],[43,'maj']],scale:[38,40,41,43,45,46,48,50,52,53,55,57],drone:.22,pad:.026,pulse:.13,shimmer:.08,melody:.1,perc:'boss',cutoff:520},
+  'Dawn Patrol':{level:.21,barDur:6.1,prog:[[55,'maj'],[60,'maj'],[57,'min'],[62,'maj']],scale:[55,57,59,60,62,64,66,67,69,71,72,74],drone:.1,pad:.046,pulse:.06,shimmer:.5,melody:.42,perc:'soft',cutoff:1300},
+  'The Gauntlet':{level:.25,barDur:3.7,prog:[[52,'min'],[50,'min'],[49,'maj'],[47,'min']],scale:[47,49,50,52,54,55,57,59,61,62,64,66],drone:.12,pad:.018,pulse:.18,shimmer:.1,melody:.08,perc:'urgent',cutoff:760},
+  'Typhoon Run':{level:.26,barDur:3.95,prog:[[45,'min'],[48,'min'],[43,'min'],[50,'maj']],scale:[43,45,47,48,50,52,53,55,57,58,60,62],drone:.2,pad:.018,pulse:.2,shimmer:.08,melody:.04,perc:'storm',cutoff:560},
+  'Blackwater Ambush':{level:.23,barDur:5.8,prog:[[49,'min'],[48,'maj'],[45,'min'],[52,'min']],scale:[45,47,48,49,52,53,55,57,59,60,61,64],drone:.17,pad:.018,pulse:.09,shimmer:.08,melody:.05,perc:'stealth',cutoff:460},
+  'Island Hopping':{level:.24,barDur:4.8,prog:[[53,'maj'],[55,'maj'],[57,'min'],[60,'maj']],scale:[53,55,57,59,60,62,64,65,67,69,71,72],drone:.1,pad:.032,pulse:.14,shimmer:.22,melody:.24,perc:'march',cutoff:980},
+  'Midnight Raid':{level:.22,barDur:5.4,prog:[[42,'min'],[45,'min'],[47,'maj'],[44,'min']],scale:[42,44,45,47,49,50,52,54,56,57,59,61],drone:.15,pad:.018,pulse:.075,shimmer:.16,melody:.05,perc:'stealth',cutoff:600},
+  'The Iron Armada':{level:.26,barDur:4.7,prog:[[50,'min'],[53,'maj'],[57,'min'],[55,'maj']],scale:[50,52,53,55,57,58,60,62,64,65,67,69],drone:.15,pad:.036,pulse:.16,shimmer:.24,melody:.32,perc:'armada',cutoff:1100},
+  'Shattered Coast':{level:.24,barDur:4.35,prog:[[51,'min'],[54,'min'],[50,'maj'],[56,'min']],scale:[50,51,53,54,56,57,59,61,62,64,65,67],drone:.13,pad:.02,pulse:.13,shimmer:.12,melody:.09,perc:'reef',cutoff:700},
+  'Frozen Straits':{level:.22,barDur:6.5,prog:[[47,'min'],[50,'maj'],[45,'min'],[52,'maj']],scale:[45,47,49,50,52,54,56,57,59,61,62,64],drone:.17,pad:.03,pulse:.055,shimmer:.44,melody:.08,perc:'cold',cutoff:760},
+  'The Reckoning':{level:.26,barDur:4.85,prog:[[57,'min'],[60,'maj'],[53,'maj'],[55,'maj']],scale:[53,55,57,59,60,62,64,65,67,69,71,72],drone:.14,pad:.038,pulse:.14,shimmer:.24,melody:.42,perc:'heroic',cutoff:1200},
+  'Ghost Fleet':{level:.23,barDur:6.2,prog:[[44,'min'],[43,'min'],[47,'dim'],[42,'min']],scale:[42,44,45,47,48,50,51,53,54,56,57,59],drone:.19,pad:.016,pulse:.05,shimmer:.16,melody:.04,perc:'ghost',cutoff:420},
+  'Volcano Bay':{level:.25,barDur:4.65,prog:[[48,'min'],[51,'maj'],[46,'min'],[43,'maj']],scale:[43,46,48,50,51,53,55,56,58,60,62,63],drone:.2,pad:.018,pulse:.17,shimmer:.08,melody:.07,perc:'volcano',cutoff:560},
+  'Last Bastion':{level:.25,barDur:4.7,prog:[[45,'min'],[48,'maj'],[50,'min'],[43,'maj']],scale:[43,45,47,48,50,52,53,55,57,58,60,62],drone:.17,pad:.024,pulse:.17,shimmer:.1,melody:.1,perc:'siege',cutoff:700},
+  'The Long Night':{level:.22,barDur:6.8,prog:[[40,'min'],[43,'min'],[38,'min'],[45,'min']],scale:[38,40,41,43,45,46,48,50,52,53,55,57],drone:.22,pad:.012,pulse:.06,shimmer:.06,melody:.02,perc:'night',cutoff:360},
+  'Hurricane Alley':{level:.27,barDur:3.75,prog:[[43,'min'],[46,'min'],[48,'maj'],[41,'min']],scale:[41,43,44,46,48,49,51,53,55,56,58,60],drone:.2,pad:.016,pulse:.22,shimmer:.08,melody:.05,perc:'storm',cutoff:520},
+  'Twin Leviathans':{level:.27,barDur:5.25,prog:[[38,'min'],[41,'min'],[38,'min'],[43,'maj']],scale:[38,40,41,43,45,46,48,50,52,53,55,57],drone:.24,pad:.026,pulse:.19,shimmer:.08,melody:.1,perc:'boss2',cutoff:540},
+  'The Crucible':{level:.27,barDur:4.25,prog:[[50,'min'],[46,'min'],[53,'maj'],[43,'min']],scale:[43,45,46,48,50,51,53,55,57,58,60,62],drone:.19,pad:.022,pulse:.18,shimmer:.13,melody:.12,perc:'crucible',cutoff:720},
+  'Steel Rain':{level:.27,barDur:3.9,prog:[[45,'min'],[43,'min'],[48,'maj'],[42,'min']],scale:[42,43,45,47,48,50,52,54,55,57,59,60],drone:.18,pad:.018,pulse:.21,shimmer:.08,melody:.05,perc:'artillery',cutoff:640},
+  'Endless Horizon':{level:.22,barDur:7.2,prog:[[55,'maj'],[50,'min'],[53,'maj'],[48,'maj']],scale:[48,50,52,53,55,57,59,60,62,64,65,67],drone:.13,pad:.052,pulse:.045,shimmer:.42,melody:.28,perc:'wide',cutoff:1450},
+  'The Final Blockade':{level:.27,barDur:4.9,prog:[[50,'min'],[53,'maj'],[48,'maj'],[55,'maj']],scale:[48,50,52,53,55,57,58,60,62,64,65,67],drone:.19,pad:.034,pulse:.18,shimmer:.18,melody:.2,perc:'blockade',cutoff:1000},
+  'Ragnarök Reef':{level:.28,barDur:3.8,prog:[[38,'min'],[43,'min'],[41,'maj'],[36,'min']],scale:[36,38,40,41,43,45,46,48,50,51,53,55],drone:.25,pad:.018,pulse:.23,shimmer:.08,melody:.05,perc:'apoc',cutoff:520},
+  'The Last Tide':{level:.29,barDur:5.15,prog:[[57,'min'],[53,'maj'],[48,'maj'],[55,'maj']],scale:[48,50,52,53,55,57,59,60,62,64,65,67,69,71,72],drone:.21,pad:.044,pulse:.2,shimmer:.25,melody:.5,perc:'final',cutoff:1300}
 };
 function musicProfileForCurrentMap(mode){
   if(mode!=='ambient') return MUSIC_PROFILES.default;
@@ -978,6 +1011,24 @@ function _scheduleAmbientPerc(t0,p,barDur){
   if(p.perc==='skirmish'){ for(let i=0;i<6;i++)if(i!==4)hit(i*barDur/6,.035+(i%3===0)*.02,i%2?900:240,.1,i%2?'bandpass':'lowpass'); return; }
   if(p.perc==='heroic'){ for(const off of[0,barDur*.5])hit(off,.05,210,.18,'lowpass'); if(MUSIC.bar%2===0)hit(barDur*.75,.026,980,.12); return; }
   if(p.perc==='reef'){ for(const off of[0,barDur*.31,barDur*.62,barDur*.84])hit(off,.032,520+Math.random()*500,.08); }
+  if(p.perc==='storm'){ for(const off of[0,barDur*.28,barDur*.56,barDur*.82])hit(off,.055,120,.22,'lowpass'); if(Math.random()<.55)hit(barDur*(.18+Math.random()*.6),.04,1100,.08); return; }
+  if(p.perc==='stealth'){ if(MUSIC.bar%2===0)_mvoice(_mtof(84),t0+barDur*.38,.18,{type:'sine',gain:.035,attack:.015,release:.22,cutoff:2600}); if(Math.random()<.45)hit(barDur*.72,.022,650,.07); return; }
+  if(p.perc==='fog'){ _mvoice(_mtof(79),t0+barDur*.28,.35,{type:'sine',gain:.04,attack:.02,release:.45,cutoff:2200}); if(MUSIC.bar%3===0)_mvoice(_mtof(67),t0+barDur*.62,.45,{type:'sine',gain:.025,attack:.03,release:.55,cutoff:1800}); return; }
+  if(p.perc==='boss'){ for(const off of[0,barDur*.5])hit(off,.075,95,.32,'lowpass'); if(MUSIC.bar%2===0)hit(barDur*.74,.045,180,.24,'lowpass'); return; }
+  if(p.perc==='boss2'){ for(const off of[0,barDur*.25,barDur*.5,barDur*.75])hit(off,.066,90,.28,'lowpass'); return; }
+  if(p.perc==='urgent'){ for(let i=0;i<8;i++)hit(i*barDur/8,.038+(i%4===0)*.025,i%2?950:170,.08,i%2?'bandpass':'lowpass'); return; }
+  if(p.perc==='armada'){ for(const off of[0,barDur*.25,barDur*.5,barDur*.75])hit(off,.05,190,.18,'lowpass'); if(MUSIC.bar%2===0)_mvoice(_mtof(62),t0+barDur*.5,.55,{type:'triangle',gain:.04,attack:.08,release:.7,cutoff:900}); return; }
+  if(p.perc==='cold'){ if(Math.random()<.7)_mvoice(_mtof(91),t0+barDur*(.2+Math.random()*.5),.65,{type:'sine',gain:.028,attack:.08,release:.9,cutoff:3400}); return; }
+  if(p.perc==='ghost'){ _mvoice(_mtof(72),t0+barDur*.33,.7,{type:'sine',gain:.035,attack:.08,release:1.0,cutoff:1700}); if(MUSIC.bar%2===1)_mvoice(_mtof(60),t0+barDur*.7,.9,{type:'sine',gain:.026,attack:.1,release:1.1,cutoff:1000}); return; }
+  if(p.perc==='volcano'){ for(const off of[0,barDur*.48])hit(off,.072,85,.34,'lowpass'); if(Math.random()<.55)hit(barDur*Math.random(),.04,380,.18,'bandpass'); return; }
+  if(p.perc==='siege'){ for(const off of[0,barDur*.25,barDur*.5,barDur*.75])hit(off,.06,135,.22,'lowpass'); return; }
+  if(p.perc==='night'){ if(MUSIC.bar%3===0)hit(barDur*.5,.025,240,.25,'lowpass'); return; }
+  if(p.perc==='crucible'){ for(let i=0;i<7;i++)if(Math.random()<.82)hit(i*barDur/7,.038,i%2?760:130,.09,i%2?'bandpass':'lowpass'); return; }
+  if(p.perc==='artillery'){ for(const off of[0,barDur*.22,barDur*.44,barDur*.66,barDur*.88])hit(off,.064,105,.2,'lowpass'); return; }
+  if(p.perc==='wide'){ if(MUSIC.bar%2===0)hit(barDur*.5,.022,180,.22,'lowpass'); return; }
+  if(p.perc==='blockade'){ for(const off of[0,barDur*.33,barDur*.66])hit(off,.062,125,.26,'lowpass'); if(MUSIC.bar%2===0)_mvoice(_mtof(69),t0+barDur*.34,.7,{type:'triangle',gain:.04,attack:.08,release:.8,cutoff:1200}); return; }
+  if(p.perc==='apoc'){ for(let i=0;i<8;i++)hit(i*barDur/8,.058+(i%4===0)*.03,i%2?520:75,.16,i%2?'bandpass':'lowpass'); if(Math.random()<.5)hit(barDur*Math.random(),.045,1400,.08); return; }
+  if(p.perc==='final'){ for(const off of[0,barDur*.25,barDur*.5,barDur*.75])hit(off,.06,145,.22,'lowpass'); _mvoice(_mtof(69),t0+barDur*.52,.8,{type:'triangle',gain:.048,attack:.08,release:.9,cutoff:1600}); }
 }
 function _scheduleBar(t0){
   if(MUSIC.mode==='ambient') return _scheduleAmbientBar(t0);   // subtle in-game bed
@@ -1653,6 +1704,10 @@ const TANKS = {
   t14:     { name:'T-14 Armata',      cost:1850, hp:420, dmg:78, fireRate:1.0,  speed:30, turn:2.0, range:235, col:0x3f4a36, hullW:3.1, hullL:5.2, hullH:0.95,turW:2.6, turL:2.6, barL:4.4, barR:0.18, sloped:true },
   type99:  { name:'Type 99',          cost:1550, hp:410, dmg:70, fireRate:1.15, speed:25, turn:1.8, range:210, col:0x55603e, hullW:3.1, hullL:5.0, hullH:1.0, turW:2.7, turL:2.7, barL:4.2, barR:0.17, sloped:true },
   k2:      { name:'K2 Black Panther', cost:1750, hp:415, dmg:74, fireRate:1.25, speed:28, turn:2.0, range:225, col:0x3a4636, hullW:3.1, hullL:5.0, hullH:0.95,turW:2.7, turL:2.7, barL:4.3, barR:0.17, sloped:true },
+  merkava: { name:'Merkava IV',        cost:1800, hp:500, dmg:66, fireRate:1.25, speed:20, turn:1.35, range:215, col:0x5d5944, hullW:3.25,hullL:5.25,hullH:1.12,turW:2.95,turL:3.1, barL:4.0, barR:0.18, marketOnly:true,
+             desc:'Marketplace blueprint. Heavy survivability-focused MBT with thick frontal armor and steady fire.' },
+  maus:    { name:'Panzer VIII Maus',  cost:2400, hp:760, dmg:92, fireRate:2.4,  speed:8,  turn:.62, range:235, col:0x5f5c50, hullW:3.8, hullL:6.1, hullH:1.55,turW:3.2, turL:3.4, barL:4.6, barR:0.24, marketOnly:true,
+             desc:'Marketplace blueprint. Ridiculous super-heavy tank: huge armor and gun, painfully slow.' },
   // ---- self-propelled artillery: indirect lob, big splash, long range, slow to reload ----
   priest:  { name:'M7 Priest',        cost:1400, hp:240, dmg:95,  fireRate:3.4, speed:17, turn:1.3, range:520, col:0x55613a, hullW:3.0, hullL:4.6, hullH:1.3, turW:2.4, turL:2.6, barL:3.0, barR:0.26, spg:true, splash:11, shellSpd:150 },
   wespe:   { name:'Wespe',            cost:1350, hp:210, dmg:88,  fireRate:3.2, speed:19, turn:1.5, range:500, col:0x6a6a4a, hullW:2.7, hullL:4.2, hullH:1.35,turW:2.2, turL:2.4, barL:3.2, barR:0.24, spg:true, splash:10, shellSpd:150 },
@@ -2534,6 +2589,7 @@ function updateTankInteriorView(){
 }
 function equipGun(id){ equippedGun=id; ownedGuns.add(id); refreshViewGun(); flashPrompt('Equipped '+HANDHELD[id].name); }
 function buyGun(id){ const W=HANDHELD[id];
+  if(marketBlocked('gun',id,W))return;
   if(ownedGuns.has(id)){ equipGun(id); sfxClick(); buildShopUI(); return; }
   const cost=priceOf(W.cost); if(money<cost){ flashPrompt('Not enough funds'); return; }
   money-=cost; ownedGuns.add(id); equipGun(id); sfxClick(); buildShopUI(); updateHUD();
@@ -2619,6 +2675,94 @@ let currentMapIdx=0, currentSandboxIdx=-1;
 function mapsUnlocked(){ return Math.max(1, Math.min(CAMPAIGN.length, career.mapsUnlocked||1)); }
 function unlockNextMap(idx){ const want=Math.min(CAMPAIGN.length, idx+2);
   if((career.mapsUnlocked||1)<want){ career.mapsUnlocked=want; saveCareer(); return true; } return false; }
+const MARKET_CATS=['weapon','plane','tank','gun','struct'];
+const MARKET_BASIC={
+  weapon:['deckgun','aa','oerlikon','m2'],
+  plane:['fighter','divebomber','uav','microdrone'],
+  tank:['prototype','sherman','stuart'],
+  gun:['pistol'],
+  struct:['command','barracks','coastal','aa','radar','searchlight','wall']
+};
+const MARKET_LEVELS={
+  'weapon:deckgun':1,'weapon:aa':1,'weapon:oerlikon':1,'weapon:m2':1,'weapon:twin':2,'weapon:bofors':3,'weapon:torpedo':3,
+  'weapon:bomb':4,'weapon:fiveinch':4,'weapon:pompom':5,'weapon:cannon':6,'weapon:quadtorp':7,'weapon:sixinch':8,
+  'weapon:missile':9,'weapon:m777':11,'weapon:eightin':13,'weapon:ciws':14,'weapon:sam':15,'weapon:patriot':17,
+  'weapon:tomahawk':20,'weapon:sixteen':22,
+  'plane:fighter':1,'plane:divebomber':1,'plane:uav':1,'plane:microdrone':1,'plane:torpbomber':3,'plane:p51':3,'plane:spitfire':3,
+  'plane:zero':4,'plane:bf109':4,'plane:stuka':5,'plane:cobra':6,'plane:p38':7,'plane:corsair':7,'plane:apache':8,
+  'plane:f16':9,'plane:f18':9,'plane:a10':10,'plane:f22':12,'plane:f35':14,'plane:b17':12,'plane:lancaster':13,
+  'plane:b24':14,'plane:b2':16,'plane:b52':17,'plane:b36':18,'plane:b29':24,'plane:nukedrone':26,'plane:tu95v':30,'plane:lfc5':31,
+  'tank:prototype':1,'tank:sherman':1,'tank:stuart':1,'tank:t34':2,'tank:panzer4':2,'tank:panther':5,'tank:tiger':6,'tank:is2':7,
+  'tank:priest':9,'tank:wespe':9,'tank:abrams':12,'tank:t90':12,'tank:type99':14,'tank:leopard2':15,'tank:challenger2':16,
+  'tank:k2':17,'tank:t14':18,'tank:m109':19,
+  'gun:pistol':1,'gun:mp5':2,'gun:shotgun':3,'gun:ak47':4,'gun:m16':4,'gun:deagle':5,'gun:sniper':7,'gun:lmg':8,'gun:rpg':10,
+  'struct:command':1,'struct:barracks':1,'struct:coastal':1,'struct:aa':1,'struct:radar':1,'struct:searchlight':1,'struct:wall':1,
+  'struct:hospital':2,'struct:ammo':3,'struct:bunker':3,'struct:workshop':4,'struct:torpbat':5,'struct:sonar':6,'struct:tankdepot':7,
+  'struct:dock':8,'struct:silo':10,'struct:helipad':11,'struct:airstrip':12,'struct:fuel':13,'struct:power':14,'struct:artillery':15,
+  'struct:rocket':17,'struct:fortress':19,'struct:supergun':22,'struct:tesla':23,'struct:nukesilo':28
+};
+function ensureCareerMarket(){
+  career.credits=Math.max(0,Math.floor(career.credits||0));
+  if(!Array.isArray(career.marketOwned))career.marketOwned=[];
+  if(!career.licenses||typeof career.licenses!=='object'||Array.isArray(career.licenses))career.licenses={};
+  MARKET_CATS.forEach(cat=>{
+    if(!Array.isArray(career.licenses[cat]))career.licenses[cat]=[];
+    (MARKET_BASIC[cat]||[]).forEach(id=>{if(!career.licenses[cat].includes(id))career.licenses[cat].push(id);});
+  });
+}
+function marketKey(cat,id){return cat+':'+id;}
+function ownsMarketItem(cat,id){ensureCareerMarket();return career.marketOwned.includes(marketKey(cat,id));}
+function marketLevel(cat,id,def){
+  const key=cat+':'+id;if(MARKET_LEVELS[key])return MARKET_LEVELS[key];
+  const cost=def&&def.cost?def.cost:0;if(cost<=0)return 1;
+  if(def&&(def.nuke||def.strategicBomb||def.nukesilo))return Math.max(24,Math.min(31,Math.ceil(cost/1300)));
+  if(cost>=9000)return 24;if(cost>=5200)return 18;if(cost>=3000)return 12;if(cost>=1800)return 8;if(cost>=1000)return 5;if(cost>=600)return 3;
+  return 2;
+}
+function marketUnlocked(cat,id,def){return def&&def.marketOnly?ownsMarketItem(cat,id):mapsUnlocked()>=marketLevel(cat,id,def);}
+function marketLicensed(cat,id,def){return marketUnlocked(cat,id,def);}
+function marketCost(cat,id,def){
+  const base=priceOf(def&&def.cost?def.cost:0),lvl=marketLevel(cat,id,def);
+  if(base<=0)return 0;
+  let mult=cat==='struct'?2.2:cat==='gun'?1.8:cat==='tank'?2.5:3;
+  if(def&&(def.nuke||def.strategicBomb||def.nukesilo))mult=5.5;
+  return Math.max(120,Math.round((base*mult+lvl*90)/10)*10);
+}
+function marketLabel(cat,id,def,normal){
+  if(!marketUnlocked(cat,id,def))return 'LOCK L'+marketLevel(cat,id,def);
+  return normal;
+}
+function buyMarketLicense(cat,id,def){
+  if(marketUnlocked(cat,id,def))return true;
+  flashPrompt(def&&def.marketOnly?(def.name+' is a campaign-market blueprint. Buy it before battle.'):((def.name||id)+' unlocks after campaign level '+marketLevel(cat,id,def)));
+  return false;
+}
+function marketBlocked(cat,id,def){return !buyMarketLicense(cat,id,def);}
+const MARKET_CATALOG=[
+  {cat:'plane',id:'mi24',cost:4200,level:8,tag:'HELICOPTER',desc:'Mi-24 Hind — historical Soviet armored gunship.'},
+  {cat:'plane',id:'bayraktar',cost:2600,level:6,tag:'DRONE',desc:'Bayraktar TB2 — cheap long-endurance strike UAV.'},
+  {cat:'tank',id:'merkava',cost:3800,level:12,tag:'TANK',desc:'Merkava IV — slow heavy MBT with excellent survivability.'},
+  {cat:'tank',id:'maus',cost:6400,level:16,tag:'SUPER-HEAVY',desc:'Panzer VIII Maus — absurd armor, huge gun, terrible speed.'}
+];
+function marketDef(item){return item.cat==='plane'?PLANES[item.id]:item.cat==='tank'?TANKS[item.id]:item.cat==='struct'?STRUCTS[item.id]:WEAPONS[item.id];}
+function buyCampaignMarketItem(key){
+  const item=MARKET_CATALOG.find(x=>marketKey(x.cat,x.id)===key); if(!item)return;
+  ensureCareerMarket();
+  const def=marketDef(item), unlocked=mapsUnlocked()>=item.level, owned=ownsMarketItem(item.cat,item.id);
+  if(owned){flashPrompt((def.name||item.id)+' already owned');return;}
+  if(!unlocked){flashPrompt((def.name||item.id)+' reaches the marketplace after level '+item.level);return;}
+  if(career.credits<item.cost){flashPrompt('Need ◈'+item.cost+' market credits. You have ◈'+career.credits+'.');return;}
+  career.credits-=item.cost;career.marketOwned.push(key);saveCareer();buildCampaignPicker();sfxClick();
+  flashPrompt('Marketplace blueprint purchased: '+(def.name||item.id)+' · ◈'+career.credits+' left');
+}
+function awardCareerCredits(win){
+  ensureCareerMarket();
+  const level=currentSandboxIdx>=0?mapsUnlocked():currentMapIdx+1;
+  const blue=typeof controlledIslandCount==='function'?controlledIslandCount(0):0;
+  const planeKills=typeof sessPlanes==='number'?sessPlanes:0;
+  const earned=Math.max(80,Math.round((win?700:180)+level*(win?150:45)+sunk*65+planeKills*30+blue*20));
+  career.credits+=earned;saveCareer();return earned;
+}
 function applyMap(){ const M=currentSandboxIdx>=0?(SANDBOX_MAPS[currentSandboxIdx]||SANDBOX_MAPS[0]):(CAMPAIGN[currentMapIdx]||CAMPAIGN[0]);
   if(typeof weather==='object'){ weather.type=M.weather; weather.tod=M.tod; weather.day=null; }
   window._MAP=M; return M; }
@@ -2691,6 +2835,7 @@ function careerRank(){ const s=careerScore(); let r=RANKS[0]; for(const k of RAN
 function nextRank(){ const s=careerScore(); for(const k of RANKS){ if(s<k.score) return k; } return null; }
 function warRecord(k,n){ career[k]=(career[k]||0)+(n||1); saveCareer(); }
 loadCareer();
+ensureCareerMarket();
 let money=Math.round(8000*(1+careerRank().perk)), sunk=0;   // veteran perk: +% starting funds per rank
 const placed=[];           // {def, group, mountIdx, yaw, pitch, cd}
 const mountMarkers=[];     // glowing rings
@@ -3266,7 +3411,7 @@ function buildCampaignPicker(){
   if(!cm){ cm=document.createElement('div'); cm.id='campmap'; cm.style.cssText='width:100%;margin:0 0 14px;'; box.insertBefore(cm, box.children[1]||null); }
   cm.innerHTML=campaignMapHTML();
   cm.querySelectorAll('.cmnode').forEach(el=>{ if(el.getAttribute('data-locked')==='0'){ el.style.cursor='pointer'; el.onclick=()=>{ currentSandboxIdx=-1; currentMapIdx=+el.getAttribute('data-idx'); buildCampaignPicker(); }; } });
-  [...box.querySelectorAll('.mapcard')].forEach(e=>e.remove());
+  [...box.querySelectorAll('.mapcard,.marketcard')].forEach(e=>e.remove());
   CAMPAIGN.forEach((M,i)=>{ const locked=i>=mapsUnlocked(), sel=i===currentMapIdx, army=mapArmyProfile(1,M);
     const c=document.createElement('div'); c.className='mapcard';
     c.style.cssText='width:152px;padding:9px;border-radius:9px;font-size:11px;transition:.15s;cursor:'+(locked?'default':'pointer')+
@@ -3290,6 +3435,21 @@ function buildCampaignPicker(){
       '<div style="color:#6e8795;margin-top:5px">'+(M.ground?'land assault':'naval sandbox')+' · '+M.enemies+' enemy · '+M.isles+' zones · '+M.weather+
       '<br>Ground army '+Math.round(army.soldiers*100)+'% infantry · '+Math.round(army.tanks*100)+'% tanks</div>';
     c.onclick=()=>{ currentSandboxIdx=i; buildCampaignPicker(); };
+    box.appendChild(c);
+  });
+  const mh=document.createElement('div'); mh.className='marketcard';
+  mh.style.cssText='width:100%;text-align:center;color:#c7a8ff;font-size:12px;letter-spacing:3px;margin:12px 0 2px;';
+  mh.textContent='CAMPAIGN MARKET — PERMANENT BLUEPRINTS · BANK ◈'+(career.credits||0);
+  box.appendChild(mh);
+  MARKET_CATALOG.forEach(item=>{
+    const def=marketDef(item), key=marketKey(item.cat,item.id), owned=ownsMarketItem(item.cat,item.id), unlocked=mapsUnlocked()>=item.level;
+    const c=document.createElement('div'); c.className='marketcard';
+    c.style.cssText='width:196px;padding:9px;border-radius:9px;font-size:11px;transition:.15s;cursor:'+(owned||!unlocked?'default':'pointer')+
+      ';border:1px solid '+(owned?'#5ecb91':unlocked?'#7d5cc8':'#342b48')+';background:'+(owned?'#10251b':unlocked?'#19152a':'#111721')+';opacity:'+(unlocked?1:.55)+';';
+    c.innerHTML='<div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#e4d6ff;font-weight:700">'+(owned?'✓ ':'')+(def.name||item.id)+'</span><span style="color:#ffd060">'+(owned?'OWNED':unlocked?'◈'+item.cost:'L'+item.level)+'</span></div>'+
+      '<div style="color:#9b86d0;margin-top:3px;font-size:10px;letter-spacing:1px">'+item.tag+'</div>'+
+      '<div style="color:#9fb1bd;margin-top:5px;line-height:1.4">'+item.desc+'</div>';
+    if(unlocked&&!owned)c.onclick=()=>buyCampaignMarketItem(key);
     box.appendChild(c);
   });
 }
@@ -4532,9 +4692,9 @@ function buildShopUI(){
   Object.keys(WEAPONS).forEach(id=>{
     const w=WEAPONS[id];
     const d=document.createElement('div'); d.className='witem'; d.dataset.id=id;
-    d.innerHTML=`<div class="wn"><span>${w.name}</span><span class="wc">$${priceOf(w.cost)}</span></div>
+    d.innerHTML=`<div class="wn"><span>${w.name}</span><span class="wc">${marketLabel('weapon',id,w,'$'+priceOf(w.cost))}</span></div>
       <div class="wd">${describe(w)}</div>`;
-    d.onclick=()=>{ if(money>=priceOf(w.cost)){ selectedWeapon=id; refreshShop(); } };
+    d.onclick=()=>{ if(marketBlocked('weapon',id,w))return; if(money>=priceOf(w.cost)){ selectedWeapon=id; refreshShop(); } else flashPrompt('Not enough battle funds'); };
     list.appendChild(d);
   });
   // --- Hangar (buy instantly; parks on deck) ---
@@ -4542,8 +4702,9 @@ function buildShopUI(){
   const sub=document.createElement('div'); sub.className='hint'; sub.textContent='Buys instantly and parks on deck. Walk up and press E to fly.'; list.appendChild(sub);
   Object.keys(PLANES).forEach(id=>{
     const p=PLANES[id];
+    if(p.marketOnly&&!ownsMarketItem('plane',id))return;
     const d=document.createElement('div'); d.className='witem plane'; d.dataset.plane=id;
-    d.innerHTML=`<div class="wn"><span>✈ ${p.name}</span><span class="wc">$${priceOf(p.cost)}</span></div>
+    d.innerHTML=`<div class="wn"><span>✈ ${p.name}</span><span class="wc">${marketLabel('plane',id,p,'$'+priceOf(p.cost))}</span></div>
       <div class="wd">${p.faction?`<span style="color:#7fb4d8">${p.faction}${p.year?' · '+p.year:''}</span><br>`:''}${p.desc}</div>`;
     d.onclick=()=>buyPlane(id);
     list.appendChild(d);
@@ -4553,8 +4714,9 @@ function buildShopUI(){
   const tsub=document.createElement('div'); tsub.className='hint'; tsub.textContent='Buys instantly onto a free deck slot. Walk up and press E to crew it.'; list.appendChild(tsub);
   Object.keys(TANKS).forEach(id=>{
     const T=TANKS[id];
+    if(T.marketOnly&&!ownsMarketItem('tank',id))return;
     const d=document.createElement('div'); d.className='witem tank'; d.dataset.tank=id;
-    d.innerHTML=`<div class="wn"><span>🛞 ${T.name}</span><span class="wc">$${priceOf(T.cost)}</span></div>
+    d.innerHTML=`<div class="wn"><span>🛞 ${T.name}</span><span class="wc">${marketLabel('tank',id,T,'$'+priceOf(T.cost))}</span></div>
       <div class="wd">${T.hp} hp · ${T.dmg} dmg · ${T.speed} spd${T.spg?' · 🎯 indirect lob':''}</div>`;
     d.onclick=()=>buyTank(id);
     list.appendChild(d);
@@ -4565,7 +4727,7 @@ function buildShopUI(){
   Object.keys(HANDHELD).forEach(id=>{
     const W=HANDHELD[id], owned=ownedGuns.has(id);
     const d=document.createElement('div'); d.className='witem gun'; d.dataset.gun=id;
-    const tag = id===equippedGun ? 'EQUIPPED' : owned ? 'OWNED' : (W.cost?('$'+priceOf(W.cost)):'FREE');
+    const tag = id===equippedGun ? 'EQUIPPED' : owned ? 'OWNED' : marketLabel('gun',id,W,(W.cost?('$'+priceOf(W.cost)):'FREE'));
     d.innerHTML=`<div class="wn"><span>${gunIcon(W.gfx)}${W.name}</span><span class="wc">${tag}</span></div>
       <div class="wd">${W.dmg} dmg · ${(1/W.cd).toFixed(1)}/s${W.pellets?' · '+W.pellets+' pellets':''}${W.splash?' · splash':''}</div>`;
     d.onclick=()=>buyGun(id);
@@ -4576,8 +4738,9 @@ function buildShopUI(){
   const isub=document.createElement('div'); isub.className='hint'; isub.textContent='Go ashore (G), then click to emplace it where you stand. Also on the B menu.'; list.appendChild(isub);
   Object.keys(STRUCTS).forEach(k=>{
     const s=STRUCTS[k];
+    if(s.marketOnly&&!ownsMarketItem('struct',k))return;
     const d=document.createElement('div'); d.className='witem struct'; d.dataset.struct=k;
-    d.innerHTML=`<div class="wn"><span>🏗️ ${s.name}</span><span class="wc">$${priceOf(s.cost)}</span></div>
+    d.innerHTML=`<div class="wn"><span>🏗️ ${s.name}</span><span class="wc">${marketLabel('struct',k,s,'$'+priceOf(s.cost))}</span></div>
       <div class="wd">${s.desc}</div>`;
     d.onclick=()=>buildStructure(k);
     list.appendChild(d);
@@ -4591,12 +4754,17 @@ function describe(w){
 function refreshShop(){
   document.querySelectorAll('.witem').forEach(el=>{
     if(el.dataset.gun){ const id=el.dataset.gun, owned=ownedGuns.has(id);
+      const W=HANDHELD[id], licensed=marketLicensed('gun',id,W), unlocked=marketUnlocked('gun',id,W);
       el.classList.toggle('sel', id===equippedGun);
-      el.classList.toggle('poor', !owned && money<priceOf(HANDHELD[id].cost)); return; }
-    if(el.dataset.struct){ el.classList.toggle('poor', money<priceOf(STRUCTS[el.dataset.struct].cost)); return; }
-    const w = el.dataset.plane ? PLANES[el.dataset.plane] : el.dataset.tank ? TANKS[el.dataset.tank] : WEAPONS[el.dataset.id];
+      el.classList.toggle('poor', !owned && (!unlocked || (!licensed&&career.credits<marketCost('gun',id,W)) || (licensed&&money<priceOf(W.cost)))); return; }
+    if(el.dataset.struct){ const id=el.dataset.struct,s=STRUCTS[id],licensed=marketLicensed('struct',id,s),unlocked=marketUnlocked('struct',id,s);
+      el.classList.toggle('poor', !unlocked || (!licensed&&career.credits<marketCost('struct',id,s)) || (licensed&&money<priceOf(s.cost))); return; }
+    const cat=el.dataset.plane?'plane':el.dataset.tank?'tank':'weapon';
+    const id=el.dataset.plane||el.dataset.tank||el.dataset.id;
+    const w = el.dataset.plane ? PLANES[id] : el.dataset.tank ? TANKS[id] : WEAPONS[id];
     if(!el.dataset.plane && !el.dataset.tank) el.classList.toggle('sel', selectedWeapon===el.dataset.id);
-    el.classList.toggle('poor', money<priceOf(w.cost));
+    const licensed=marketLicensed(cat,id,w),unlocked=marketUnlocked(cat,id,w);
+    el.classList.toggle('poor', !unlocked || (!licensed&&career.credits<marketCost(cat,id,w)) || (licensed&&money<priceOf(w.cost)));
   });
 }
 function toggleShop(){
@@ -4664,8 +4832,9 @@ function buildBuildUI(){
 function refreshBuild(){
   document.querySelectorAll('.uitem[data-struct]').forEach(el=>{
     const k=el.dataset.struct, s=STRUCTS[k], cost=priceOf(s.cost);
-    el.classList.toggle('poor', money<cost);
-    el.innerHTML=`<div class="un"><span>${s.name}</span><span class="uc">$${cost}</span></div><div class="ud">${s.desc}</div>`;
+    const licensed=marketLicensed('struct',k,s),unlocked=marketUnlocked('struct',k,s);
+    el.classList.toggle('poor', !unlocked || (!licensed&&career.credits<marketCost('struct',k,s)) || (licensed&&money<cost));
+    el.innerHTML=`<div class="un"><span>${s.name}</span><span class="uc">${marketLabel('struct',k,s,'$'+cost)}</span></div><div class="ud">${s.desc}</div>`;
   });
 }
 function toggleBuild(){
@@ -4684,6 +4853,7 @@ function buildStructure(k){
   if(!footLand){ flashPrompt('Swim to dry land before building '+STRUCTS[k].name); return; }
   if((footLand.capRing&&footLand.owner!==0)||footLand.team===1){ flashPrompt('This position is not under friendly control'); return; }
   const s=STRUCTS[k], cost=priceOf(s.cost);
+  if(marketBlocked('struct',k,s))return;
   if(money<cost){ flashPrompt('Not enough funds'); return; }
   if(k==='nukesilo'&&landUnits.some(u=>!u.dead&&u.team===0&&u.nukesilo)){flashPrompt('Only one operational R-36M silo is permitted per side');return;}
   const isl=footLand&&footLand.capRing?footLand:null;
@@ -4745,6 +4915,7 @@ function tryPlace(){
   if(phase!=='play'||manning||driving||piloting||shopOpen||harborOpen) return;
   if(!selectedWeapon){ flashPrompt('Pick a weapon in the Armory (Tab)'); return; }
   const w=WEAPONS[selectedWeapon]; const cost=priceOf(w.cost);
+  if(marketBlocked('weapon',selectedWeapon,w))return;
   if(placed.length>=player.def.mounts){ flashPrompt('Gun limit reached — this hull mounts only '+player.def.mounts+' guns'); return; }
   if(money<cost){ flashPrompt('Not enough funds'); return; }
   // install a couple feet ahead of where you stand, on the deck (free placement anywhere)
@@ -4822,6 +4993,7 @@ function toggleMan(){
 // ---------- planes: buy / fly / land ----------
 function buyPlane(id){
   const p=PLANES[id]; const cost=priceOf(p.cost);
+  if(marketBlocked('plane',id,p))return;
   if(p.uav&&planes.filter(q=>q.def.uav).length>=MAX_PLAYER_UAVS){flashPrompt('Drone bay limit reached ('+MAX_PLAYER_UAVS+')');return;}
   if(money<cost){ flashPrompt('Not enough funds'); return; }
   const spot=planeSpots.find(s=>!s.taken);
@@ -4833,6 +5005,7 @@ function buyPlane(id){
 }
 function buyTank(id){
   const T=TANKS[id]; const cost=priceOf(T.cost);
+  if(marketBlocked('tank',id,T))return;
   if(money<cost){ flashPrompt('Not enough funds'); return; }
   if(landCampaignMode){
     const surf=footSurfaceAt(footPos,0), isl=landIdentity(surf)||footLand;
@@ -6693,7 +6866,7 @@ function critStatus(){
   return extra + (s.length? '   ·   DAMAGE '+s.join(' ') : '');
 }
 function updateHUD(){
-  document.getElementById('money').textContent='$'+money;
+  document.getElementById('money').textContent='$'+money+' · ◈'+(career.credits||0);
   const wg = weather.type==='storm'?'⛈️':weather.type==='fog'?'🌫️':weather.type==='overcast'?'☁️':(weather.day<0.32?'🌙':'☀️');
   const forceLabel=(window._MAP&&window._MAP.ground)?('Ground '+landUnits.filter(u=>!u.dead&&u.team===0).length+'v'+landUnits.filter(u=>!u.dead&&u.team===1).length):('Fleet '+(allies.length+1)+'v'+enemies.length);
   document.getElementById('score').textContent=wg+'  Sunk: '+sunk+'   ·   '+forceLabel+
@@ -6830,6 +7003,7 @@ function endGame(win,msg){
   if(win&&currentSandboxIdx<0){ if(unlockNextMap(currentMapIdx)){ const nm=CAMPAIGN[currentMapIdx+1];
       unlockMsg=`<br><br><span style="color:#7ff0a8">🗺 NEW THEATER UNLOCKED — ${nm.name}!</span>`; }
     else if(currentMapIdx>=CAMPAIGN.length-1){ if(!career.completed){ career.completed=true; saveCareer(); } unlockMsg='<br><br><span style="color:#ffd060">🏆 CAMPAIGN COMPLETE — every theater is yours, Fleet Admiral.</span>'; } }
+  const marketEarned=awardCareerCredits(win);
   if(document.pointerLockElement)document.exitPointerLock();
   document.getElementById('over').style.display='flex';
   const t=document.getElementById('overTitle');
@@ -6837,6 +7011,7 @@ function endGame(win,msg){
   const promo = r.name!==oldRank.name ? `  ⭐ PROMOTED TO ${r.name.toUpperCase()}!` : '';
   document.getElementById('overText').innerHTML =
     (msg?msg+'  ':'') + `You sank ${sunk} ${sunk===1?'ship':'ships'}. ($${money} in the bank.)${promo}` +
+    `<br><span style="color:#ffd060">◈ MARKET PAYOUT +${marketEarned} · Permanent bank ◈${career.credits||0}</span>` +
     `<br><br><span style="color:#9fc6e8">⚓ WAR RECORD — ${r.name} (+${Math.round(r.perk*100)}% starting funds)</span>` +
     `<br>Ships sunk ${career.sunk} · Aircraft ${career.planes} · Islands ${career.islands} · Leviathans ${career.bosses} · Wars ${career.wins}W/${career.losses}L` +
     (nx?`<br><span style="color:#6b7d92">Next rank: ${nx.name} at ${nx.score} points (you have ${careerScore()})</span>`:'<br><span style="color:#ffd060">Highest rank achieved.</span>')+
